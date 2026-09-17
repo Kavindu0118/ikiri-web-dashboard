@@ -1,0 +1,1045 @@
+import Toggle from '../Toggle'
+import { useState } from 'react'
+import { IconTrash, IconLock, IconEye } from '../Icons'
+
+export default function SettingsScreen({
+  restaurantSettings,
+  profile,
+  isRestaurantLoading,
+  isRestaurantUpdating,
+  handleToggleOnlineOrders,
+  handleToggleServiceFee,
+  handleServiceFeePercentageChange,
+  handleCurrencyChange,
+  handleRestaurantNameChange,
+  handleSlugChange,
+  handleRestaurantAddressChange,
+  handleRestaurantPhoneChange,
+  handleRestaurantWebsiteChange,
+  handleAppPinChange,
+  savedMenus,
+  setDeleteConfirmId,
+  tableTrackingEnabled,
+  tableCount,
+  handleToggleTableTracking,
+  handleTableCountChange,
+  roomOrderingEnabled = false,
+  rooms = [],
+  handleToggleRoomOrdering,
+  handleSaveRooms,
+  waiterCodes = [],
+  isWaiterCodesLoading = false,
+  isWaiterCodesUpdating = false,
+  onAddWaiterCode,
+  onDeleteWaiterCode,
+}) {
+  const [editingName, setEditingName] = useState(false)
+  const [editingSlug, setEditingSlug] = useState(false)
+  const [editingAddress, setEditingAddress] = useState(false)
+  const [editingPhone, setEditingPhone] = useState(false)
+  const [slugError, setSlugError] = useState('')
+  const [editingWebsite, setEditingWebsite] = useState(false)
+
+  // App Security PIN state
+  const [pinInput, setPinInput] = useState('')
+  const [isEditingPin, setIsEditingPin] = useState(false)
+  const [showPin, setShowPin] = useState(false)
+  const [pinError, setPinError] = useState('')
+  const [pinSuccess, setPinSuccess] = useState('')
+
+  const [isAdditionalSettingsOpen, setIsAdditionalSettingsOpen] = useState(false)
+
+  const [tempName, setTempName] = useState(restaurantSettings?.name || '')
+  const [tempSlug, setTempSlug] = useState(restaurantSettings?.slug || '')
+  const [tempAddress, setTempAddress] = useState(restaurantSettings?.address || '')
+  const [tempPhone, setTempPhone] = useState(restaurantSettings?.phone || '')
+  const [tempWebsite, setTempWebsite] = useState(restaurantSettings?.website || '')
+
+  const [newCode, setNewCode] = useState('')
+  const [newRoomInput, setNewRoomInput] = useState('')
+  const [editingPartitionRoomId, setEditingPartitionRoomId] = useState(null)
+  const [tempPartitionCount, setTempPartitionCount] = useState(2)
+
+  const generateRoomToken = () => {
+    const chars = '23456789abcdefghjkmnpqrstuvwxyz'
+    let token = ''
+    for (let i = 0; i < 8; i++) {
+      token += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    return token
+  }
+
+  const handleAddRoomsFromInput = async (e) => {
+    e?.preventDefault()
+    if (!newRoomInput.trim() || !handleSaveRooms) return
+    const rawTokens = newRoomInput.split(/[\n,]+/).map(r => r.trim()).filter(Boolean)
+    if (rawTokens.length === 0) return
+
+    const currentRooms = Array.isArray(rooms) ? [...rooms] : []
+    const updated = [...currentRooms]
+
+    for (const num of rawTokens) {
+      if (!updated.some(r => r.number?.toLowerCase() === num.toLowerCase())) {
+        updated.push({
+          id: `room_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          number: num,
+          token: generateRoomToken(),
+          partitionCount: 1,
+          createdAt: new Date().toISOString()
+        })
+      }
+    }
+
+    await handleSaveRooms(updated)
+    setNewRoomInput('')
+  }
+
+  const handleUpdateRoomPartition = async (roomId, count) => {
+    if (!handleSaveRooms) return
+    const currentRooms = Array.isArray(rooms) ? rooms : []
+    const updated = currentRooms.map((r) => {
+      if (r.id === roomId || r.number === roomId) {
+        return {
+          ...r,
+          partitionCount: count > 1 ? count : 1,
+        }
+      }
+      return r
+    })
+    await handleSaveRooms(updated)
+  }
+
+  const handleSaveRoomPartition = async (roomId) => {
+    await handleUpdateRoomPartition(roomId, tempPartitionCount)
+    setEditingPartitionRoomId(null)
+  }
+
+  const handleDeleteRoomItem = async (roomId) => {
+    if (!handleSaveRooms) return
+    const currentRooms = Array.isArray(rooms) ? rooms : []
+    const updated = currentRooms.filter(r => r.id !== roomId && r.number !== roomId)
+    await handleSaveRooms(updated)
+  }
+
+  const handleAddCode = async () => {
+    const trimmed = newCode.trim()
+    if (trimmed.length < 5) {
+      alert('Code must be at least 5 characters long.')
+      return
+    }
+    if (waiterCodes.some(item => item.code.toLowerCase() === trimmed.toLowerCase())) {
+      alert('This waiter code already exists.')
+      return
+    }
+    await onAddWaiterCode(trimmed)
+    setNewCode('')
+  }
+
+  const handleSaveName = async () => {
+    if (tempName.trim()) {
+      await handleRestaurantNameChange(tempName.trim())
+      setEditingName(false)
+    }
+  }
+
+  const handleSaveSlug = async () => {
+    const trimmedSlug = tempSlug.trim()
+    if (!trimmedSlug) return
+
+    setSlugError('')
+    try {
+      await handleSlugChange(trimmedSlug)
+      setEditingSlug(false)
+    } catch (err) {
+      setSlugError(err.message || 'This slug already exists. Please choose another one.')
+    }
+  }
+
+  const handleSaveAddress = async () => {
+    await handleRestaurantAddressChange(tempAddress.trim())
+    setEditingAddress(false)
+  }
+
+  const handleSavePhone = async () => {
+    await handleRestaurantPhoneChange(tempPhone.trim())
+    setEditingPhone(false)
+  }
+
+  const handleSaveWebsite = async () => {
+    await handleRestaurantWebsiteChange(tempWebsite.trim())
+    setEditingWebsite(false)
+  }
+
+  const handleCancelPhone = () => {
+    setTempPhone(restaurantSettings?.phone || '')
+    setEditingPhone(false)
+  }
+
+  const handleCancelWebsite = () => {
+    setTempWebsite(restaurantSettings?.website || '')
+    setEditingWebsite(false)
+  }
+
+  const handleCancelName = () => {
+    setTempName(restaurantSettings?.name || '')
+    setEditingName(false)
+  }
+
+  const handleCancelSlug = () => {
+    setTempSlug(restaurantSettings?.slug || '')
+    setEditingSlug(false)
+    setSlugError('')
+  }
+
+  const handleCancelAddress = () => {
+    setTempAddress(restaurantSettings?.address || '')
+    setEditingAddress(false)
+  }
+
+  return (
+    <div className="p-6 sm:p-8 max-w-2xl">
+      <p className="text-xs font-semibold uppercase tracking-widest text-neutral-500">Settings</p>
+      <h2 className="mt-1 mb-6 text-2xl font-bold text-neutral-900">App Settings</h2>
+
+      {/* Online Orders */}
+      <div className="card p-5 mb-4">
+        <p className="text-xs font-semibold uppercase tracking-widest mb-4" style={{ color: '#16a34a' }}>Orders</p>
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="font-semibold text-neutral-900">Online Orders</p>
+            <p className="mt-1 text-sm text-neutral-500">Allow customers to place orders directly from your QR menu.</p>
+          </div>
+          <Toggle
+            on={!!restaurantSettings?.allowOnlineOrders}
+            onToggle={handleToggleOnlineOrders}
+            disabled={isRestaurantLoading || isRestaurantUpdating || !restaurantSettings}
+          />
+        </div>
+        {restaurantSettings?.allowOnlineOrders && (
+          <div className="mt-4 rounded-xl p-3 text-sm" style={{ background: '#f0fdf4', color: '#15803d' }}>
+            ✓ Customers can now see an order form on your QR menu page.
+          </div>
+        )}
+      </div>
+
+      {/* Service Fee */}
+      <div className="card p-5 mb-4">
+        <div className="flex items-center justify-between gap-4 border-b border-neutral-100 pb-4 mb-4">
+          <div>
+            <p className="font-semibold text-neutral-900">
+              Service Fee
+            </p>
+            <p className="mt-1 text-sm text-neutral-500">
+              Add service charge automatically to customer bills.
+            </p>
+          </div>
+          <Toggle
+            on={!!restaurantSettings?.serviceFeeEnabled}
+            onToggle={handleToggleServiceFee}
+            disabled={
+              isRestaurantLoading ||
+              isRestaurantUpdating ||
+              !restaurantSettings
+            }
+          />
+        </div>
+
+        {restaurantSettings?.serviceFeeEnabled && (
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="font-semibold text-neutral-900">
+                Service Fee Percentage
+              </p>
+              <p className="text-sm text-neutral-500">
+                Default restaurant service charge
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={
+                  restaurantSettings?.serviceFeePercentage || 10
+                }
+                onChange={(e) =>
+                  handleServiceFeePercentageChange(
+                    Number(e.target.value)
+                  )
+                }
+                className="w-20 rounded-lg border border-neutral-300 px-3 py-2 text-sm"
+              />
+              <span>%</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Restaurant Details */}
+      <div className="card p-5 mb-4">
+        <p className="text-xs font-semibold uppercase tracking-widest mb-4" style={{ color: '#16a34a' }}>Restaurant Details</p>
+        <div className="space-y-3">
+          {/* Restaurant Name */}
+          <div className="flex justify-between items-center py-2 border-b border-neutral-100">
+            <span className="text-sm font-medium text-neutral-600">Restaurant Name</span>
+            {editingName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={tempName}
+                  onChange={(e) => setTempName(e.target.value)}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 px-2 py-1 text-sm outline-none transition focus:border-green-500"
+                  placeholder="Enter restaurant name"
+                />
+                <button
+                  onClick={handleSaveName}
+                  disabled={isRestaurantUpdating || !tempName.trim()}
+                  className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={handleCancelName}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setTempName(restaurantSettings?.name || '')
+                  setEditingName(true)
+                }}
+                disabled={isRestaurantLoading || isRestaurantUpdating}
+                className="text-sm font-semibold text-neutral-900 hover:text-green-600 transition disabled:opacity-60"
+              >
+                {restaurantSettings?.name || profile?.restaurantName || '—'}
+              </button>
+            )}
+          </div>
+
+          {/* Menu Slug */}
+          <div className="flex justify-between items-center py-2 border-b border-neutral-100">
+            <span className="text-sm font-medium text-neutral-600">Menu Slug</span>
+            {editingSlug ? (
+              <div className="flex flex-col items-end gap-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    value={tempSlug}
+                    onChange={(e) => {
+                      setTempSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))
+                      if (slugError) setSlugError('')
+                    }}
+                    disabled={isRestaurantUpdating}
+                    className="font-mono rounded-lg border border-neutral-300 px-2 py-1 text-sm outline-none transition focus:border-green-500"
+                    placeholder="e.g. my-restaurant"
+                  />
+                  <button
+                    onClick={handleSaveSlug}
+                    disabled={isRestaurantUpdating || !tempSlug.trim()}
+                    className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={handleCancelSlug}
+                    disabled={isRestaurantUpdating}
+                    className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {slugError && <p className="text-xs text-red-600">{slugError}</p>}
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setTempSlug(restaurantSettings?.slug || '')
+                  setSlugError('')
+                  setEditingSlug(true)
+                }}
+                disabled={isRestaurantLoading || isRestaurantUpdating}
+                className="font-mono text-sm text-neutral-700 hover:text-green-600 transition disabled:opacity-60"
+              >
+                {restaurantSettings?.slug || '—'}
+              </button>
+            )}
+          </div>
+
+          {/* Restaurant Address */}
+          <div className="flex justify-between items-center py-2 border-b border-neutral-100">
+            <span className="text-sm font-medium text-neutral-600">Address</span>
+            {editingAddress ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={tempAddress}
+                  onChange={(e) => setTempAddress(e.target.value)}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 px-2 py-1 text-sm outline-none transition focus:border-green-500"
+                  placeholder="Enter address"
+                />
+                <button
+                  onClick={handleSaveAddress}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={handleCancelAddress}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setTempAddress(restaurantSettings?.address || '')
+                  setEditingAddress(true)
+                }}
+                disabled={isRestaurantLoading || isRestaurantUpdating}
+                className="text-sm font-medium text-neutral-900 hover:text-green-600 transition disabled:opacity-60 text-right max-w-[200px] truncate"
+              >
+                {restaurantSettings?.address || '—'}
+              </button>
+            )}
+          </div>
+
+          {/* Restaurant Phone */}
+          <div className="flex justify-between items-center py-2 border-b border-neutral-100">
+            <span className="text-sm font-medium text-neutral-600">Phone Number</span>
+            {editingPhone ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={tempPhone}
+                  onChange={(e) => setTempPhone(e.target.value)}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 px-2 py-1 text-sm outline-none transition focus:border-green-500"
+                  placeholder="Enter phone number"
+                />
+                <button
+                  onClick={handleSavePhone}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={handleCancelPhone}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setTempPhone(restaurantSettings?.phone || '')
+                  setEditingPhone(true)
+                }}
+                disabled={isRestaurantLoading || isRestaurantUpdating}
+                className="text-sm font-medium text-neutral-900 hover:text-green-600 transition disabled:opacity-60"
+              >
+                {restaurantSettings?.phone || '—'}
+              </button>
+            )}
+          </div>
+
+          {/* Restaurant Website */}
+          <div className="flex justify-between items-center py-2 border-b border-neutral-100">
+            <span className="text-sm font-medium text-neutral-600">Website</span>
+            {editingWebsite ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={tempWebsite}
+                  onChange={(e) => setTempWebsite(e.target.value)}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 px-2 py-1 text-sm outline-none transition focus:border-green-500"
+                  placeholder="Enter website URL"
+                />
+                <button
+                  onClick={handleSaveWebsite}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={handleCancelWebsite}
+                  disabled={isRestaurantUpdating}
+                  className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setTempWebsite(restaurantSettings?.website || '')
+                  setEditingWebsite(true)
+                }}
+                disabled={isRestaurantLoading || isRestaurantUpdating}
+                className="text-sm font-medium text-neutral-900 hover:text-green-600 transition disabled:opacity-60 text-right max-w-[200px] truncate"
+              >
+                {restaurantSettings?.website || '—'}
+              </button>
+            )}
+          </div>
+
+          {/* Status */}
+          <div className="flex justify-between items-center py-2">
+            <span className="text-sm font-medium text-neutral-600">Status</span>
+            <span className={restaurantSettings?.isActive ? 'badge-green' : 'badge-gray'}>
+              {restaurantSettings?.isActive ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Additional / Advanced Settings Collapsible Accordion */}
+      <div className="mt-6 mb-4">
+        <button
+          type="button"
+          onClick={() => setIsAdditionalSettingsOpen(!isAdditionalSettingsOpen)}
+          className="w-full flex items-center justify-between p-4 rounded-2xl bg-white hover:bg-neutral-50/90 border border-neutral-200 transition-all shadow-2xs group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800 font-bold text-sm">
+              ⚙️
+            </div>
+            <div className="text-left">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-neutral-900">Additional Settings</span>
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200">
+                  {isAdditionalSettingsOpen ? 'Expanded' : 'Tap to Expand'}
+                </span>
+              </div>
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Table tracking, Room service partitions, Security PIN, Waiter codes & preferences
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-neutral-500 group-hover:text-neutral-900 transition">
+            <span className="text-xs font-semibold">{isAdditionalSettingsOpen ? 'Collapse' : 'Expand'}</span>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className={`transform transition-transform duration-200 ${isAdditionalSettingsOpen ? 'rotate-180' : ''}`}
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </div>
+        </button>
+      </div>
+
+      {isAdditionalSettingsOpen && (
+        <div className="space-y-4">
+          {/* Table Tracking */}
+          <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-neutral-900">
+                  Table Tracking
+                </h3>
+                <p className="text-sm text-neutral-500">
+                  Generate a unique QR code for each table.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleTableTracking}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full ${tableTrackingEnabled
+                    ? "bg-green-600"
+                    : "bg-neutral-300"
+                  }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${tableTrackingEnabled
+                      ? "translate-x-6"
+                      : "translate-x-1"
+                    }`}
+                />
+              </button>
+            </div>
+
+            {tableTrackingEnabled && (
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-neutral-700">
+                  Number of Tables
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={tableCount}
+                  onChange={(e) =>
+                    handleTableCountChange(e.target.value)
+                  }
+                  className="mt-2 w-full rounded-xl border border-neutral-300 px-3 py-2"
+                  placeholder="Enter table count"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Room Service Ordering */}
+          <div className="card p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-neutral-900">Room Service Ordering</h3>
+                  <span className="rounded-md bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700 border border-green-200">Hotel & Rooms</span>
+                </div>
+                <p className="text-sm text-neutral-500 mt-1">
+                  Allow guests to scan secure QR codes from their hotel rooms to place room service orders.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleToggleRoomOrdering}
+                disabled={isRestaurantLoading || isRestaurantUpdating}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${roomOrderingEnabled ? 'bg-green-600' : 'bg-neutral-300'}`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${roomOrderingEnabled ? 'translate-x-6' : 'translate-x-1'}`}
+                />
+              </button>
+            </div>
+
+            {roomOrderingEnabled && (
+              <div className="mt-5 border-t border-neutral-100 pt-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-600 mb-1.5">
+                    Add Room Numbers (Single or comma-separated)
+                  </label>
+                  <form onSubmit={handleAddRoomsFromInput} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newRoomInput}
+                      onChange={(e) => setNewRoomInput(e.target.value)}
+                      placeholder="e.g. 101, 102, 103, 201, Penthouse"
+                      className="input-field flex-1 text-sm"
+                      disabled={isRestaurantUpdating}
+                    />
+                    <button
+                      type="submit"
+                      disabled={isRestaurantUpdating || !newRoomInput.trim()}
+                      className="btn-green text-xs px-4 py-2 flex-shrink-0"
+                    >
+                      + Add Room(s)
+                    </button>
+                  </form>
+                  <p className="mt-1 text-xs text-neutral-400">
+                    Each room automatically receives an unguessable security token to prevent unauthorized room changes.
+                  </p>
+                </div>
+
+                {/* Room List */}
+                {rooms && rooms.length > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-neutral-500 uppercase tracking-wider px-1">
+                      <span>Configured Rooms ({rooms.length})</span>
+                      <span>Partitions & Security</span>
+                    </div>
+                    <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                      {rooms.map((rm) => (
+                        <div
+                          key={rm.id || rm.number}
+                          className="flex items-center justify-between rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5 text-sm"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-green-100 font-bold text-green-800 text-xs">
+                              🛏️
+                            </span>
+                            <span className="font-semibold text-neutral-900">Room {rm.number}</span>
+                            {rm.partitionCount > 1 && (
+                              <span className="rounded-md bg-purple-50 px-2 py-0.5 text-xs font-bold text-purple-700 border border-purple-200 shadow-2xs">
+                                {rm.partitionCount} Partitions ({Array.from({ length: rm.partitionCount }, (_, i) => String.fromCharCode(65 + i)).join(', ')})
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            {/* Partition Control */}
+                            {editingPartitionRoomId === (rm.id || rm.number) ? (
+                              <div className="flex items-center gap-1 bg-purple-50 border border-purple-300 rounded-lg p-1 shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => setTempPartitionCount(Math.max(1, tempPartitionCount - 1))}
+                                  disabled={isRestaurantUpdating}
+                                  title="Decrease Partitions"
+                                  className="w-5 h-5 flex items-center justify-center rounded bg-white text-purple-800 font-bold hover:bg-purple-100 text-xs shadow-2xs"
+                                >
+                                  -
+                                </button>
+                                <span className="px-2 text-xs font-bold text-purple-950 min-w-[1.5rem] text-center">
+                                  {tempPartitionCount}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setTempPartitionCount(Math.min(6, tempPartitionCount + 1))}
+                                  disabled={isRestaurantUpdating}
+                                  title="Increase Partitions"
+                                  className="w-5 h-5 flex items-center justify-center rounded bg-white text-purple-800 font-bold hover:bg-purple-100 text-xs shadow-2xs"
+                                >
+                                  +
+                                </button>
+                                {/* Tick Save Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleSaveRoomPartition(rm.id || rm.number)}
+                                  disabled={isRestaurantUpdating}
+                                  title="Save Partition to DB"
+                                  className="flex items-center justify-center w-6 h-6 rounded-md bg-green-600 hover:bg-green-700 text-white font-bold text-xs shadow-xs transition"
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12" />
+                                  </svg>
+                                </button>
+                                {/* Cancel Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingPartitionRoomId(null)}
+                                  disabled={isRestaurantUpdating}
+                                  title="Cancel"
+                                  className="w-5 h-5 flex items-center justify-center text-neutral-400 hover:text-neutral-700 text-xs"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : rm.partitionCount > 1 ? (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingPartitionRoomId(rm.id || rm.number)
+                                    setTempPartitionCount(rm.partitionCount || 2)
+                                  }}
+                                  disabled={isRestaurantUpdating}
+                                  className="rounded-lg border border-purple-200 bg-purple-50 px-2 py-1 text-xs font-bold text-purple-700 hover:bg-purple-100 transition shadow-2xs flex items-center gap-1"
+                                  title="Edit Partitions"
+                                >
+                                  <span>{rm.partitionCount} Parts</span>
+                                  <span className="text-[10px] text-purple-500">✏️</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingPartitionRoomId(rm.id || rm.number)
+                                  setTempPartitionCount(2)
+                                }}
+                                disabled={isRestaurantUpdating}
+                                className="rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-bold text-purple-700 hover:bg-purple-100 transition shadow-2xs disabled:opacity-50"
+                                title="Split room into partitions (Twin / Multi-Guest)"
+                              >
+                                + Partition
+                              </button>
+                            )}
+
+                            <span className="font-mono text-xs text-neutral-400 bg-white px-2 py-0.5 rounded border border-neutral-200 hidden sm:inline-block" title="Cryptographic Room Token">
+                              rk_{rm.token}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRoomItem(rm.id || rm.number)}
+                              disabled={isRestaurantUpdating}
+                              className="text-neutral-400 hover:text-red-600 transition p-1"
+                              title="Remove Room"
+                            >
+                              <IconTrash />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50/50 p-4 text-center text-xs text-neutral-500">
+                    No rooms added yet. Enter room numbers above to generate room QR codes.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* App Security PIN */}
+          <div className="card p-5">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-4" style={{ color: '#16a34a' }}>Security</p>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-green-100 text-green-700 flex-shrink-0 mt-0.5">
+                  <IconLock />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-neutral-900">App Security PIN</p>
+                    {restaurantSettings?.appPin && !isEditingPin && (
+                      <span className="rounded-md bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-700 border border-green-200">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Set a 4-digit PIN for application security, staff authentication, and protected admin actions.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {restaurantSettings?.appPin && !isEditingPin ? (
+              <div className="mt-4 pt-4 border-t border-neutral-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center bg-neutral-100 px-3.5 py-1.5 rounded-lg border border-neutral-200 font-mono text-base tracking-widest font-bold text-neutral-800">
+                    {showPin ? restaurantSettings.appPin : '••••'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="text-neutral-500 hover:text-neutral-800 text-xs font-medium flex items-center gap-1.5 transition py-1 px-2 rounded-lg hover:bg-neutral-100"
+                    title={showPin ? 'Hide PIN' : 'Show PIN'}
+                  >
+                    <IconEye />
+                    <span>{showPin ? 'Hide' : 'Reveal'}</span>
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPinInput(restaurantSettings.appPin || '')
+                      setPinError('')
+                      setPinSuccess('')
+                      setIsEditingPin(true)
+                    }}
+                    disabled={isRestaurantUpdating}
+                    className="rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                  >
+                    Change PIN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (window.confirm('Are you sure you want to remove the App PIN?')) {
+                        setPinError('')
+                        try {
+                          await handleAppPinChange?.('')
+                          setPinSuccess('PIN successfully removed.')
+                          setTimeout(() => setPinSuccess(''), 3000)
+                        } catch (err) {
+                          setPinError(err.message || 'Failed to remove PIN.')
+                        }
+                      }
+                    }}
+                    disabled={isRestaurantUpdating}
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-60"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 pt-4 border-t border-neutral-100">
+                <div className="space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="relative flex items-center">
+                      <input
+                        type={showPin ? 'text' : 'password'}
+                        inputMode="numeric"
+                        maxLength={4}
+                        value={pinInput}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 4)
+                          setPinInput(val)
+                          if (pinError) setPinError('')
+                        }}
+                        placeholder="4-digit PIN"
+                        disabled={isRestaurantUpdating}
+                        className="font-mono text-center tracking-widest text-lg w-36 rounded-lg border border-neutral-300 px-3 py-2 outline-none transition focus:border-green-500 font-bold bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPin(!showPin)}
+                        className="ml-2 text-neutral-400 hover:text-neutral-700 p-2 transition"
+                        title={showPin ? 'Hide PIN' : 'Show PIN'}
+                      >
+                        <IconEye />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!/^\d{4}$/.test(pinInput)) {
+                            setPinError('PIN must be exactly 4 numeric digits (0-9).')
+                            return
+                          }
+                          setPinError('')
+                          try {
+                            await handleAppPinChange?.(pinInput)
+                            setIsEditingPin(false)
+                            setPinInput('')
+                            setPinSuccess('PIN saved successfully!')
+                            setTimeout(() => setPinSuccess(''), 3000)
+                          } catch (err) {
+                            setPinError(err.message || 'Failed to save PIN.')
+                          }
+                        }}
+                        disabled={isRestaurantUpdating || pinInput.length !== 4}
+                        className="btn-green text-xs px-4 py-2 font-semibold disabled:opacity-60"
+                      >
+                        {isRestaurantUpdating ? 'Saving...' : 'Save PIN'}
+                      </button>
+                      {restaurantSettings?.appPin && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsEditingPin(false)
+                            setPinInput('')
+                            setPinError('')
+                          }}
+                          disabled={isRestaurantUpdating}
+                          className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {pinError && <p className="text-xs text-red-600 font-medium">{pinError}</p>}
+                  {pinSuccess && <p className="text-xs text-green-600 font-medium">{pinSuccess}</p>}
+                  <p className="text-xs text-neutral-400">
+                    Enter a 4-digit numeric PIN (e.g. 1234). Saved directly to your Firebase Firestore restaurant database record.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Waiter Codes */}
+          <div className="card p-5">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-4" style={{ color: '#16a34a' }}>Waiter Codes</p>
+            <p className="text-sm text-neutral-500 mb-4">
+              Manage up to 10 one-time codes (minimum 5 characters) for authenticating waiters.
+            </p>
+
+            {isWaiterCodesLoading ? (
+              <div className="text-sm text-neutral-500 py-2">Loading waiter codes...</div>
+            ) : waiterCodes.length === 0 ? (
+              <div className="text-sm text-neutral-500 bg-neutral-50 p-4 rounded-xl border border-dashed border-neutral-200 text-center mb-4">
+                No waiter codes added yet.
+              </div>
+            ) : (
+              <div className="space-y-2 mb-4">
+                {waiterCodes.map(({ code, used }) => (
+                  <div key={code} className="flex items-center justify-between p-3 rounded-xl border border-neutral-100 bg-neutral-50/50">
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-sm font-semibold text-neutral-800">{code}</span>
+                      <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${used
+                          ? 'bg-red-50 text-red-700 border border-red-100'
+                          : 'bg-green-50 text-green-700 border border-green-100'
+                        }`}>
+                        {used ? 'Used' : 'Not Used'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isWaiterCodesUpdating}
+                      onClick={() => onDeleteWaiterCode(code)}
+                      className="text-neutral-400 hover:text-red-600 transition disabled:opacity-50"
+                      title="Delete waiter code"
+                    >
+                      <IconTrash />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {waiterCodes.length < 10 ? (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCode}
+                  onChange={(e) => setNewCode(e.target.value.replace(/\s+/g, ''))}
+                  disabled={isWaiterCodesUpdating}
+                  placeholder="Enter code (min 5 chars)"
+                  className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-green-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCode}
+                  disabled={isWaiterCodesUpdating || newCode.trim().length < 5}
+                  className="btn-green px-4 py-2 text-sm font-semibold whitespace-nowrap"
+                >
+                  Add Code
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-amber-600">
+                ✓ Maximum limit of 10 waiter codes reached. Delete an existing code to add a new one.
+              </p>
+            )}
+          </div>
+
+          {/* App Preferences */}
+          <div className="card p-5">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-4 text-neutral-400">App Preferences</p>
+
+            <div className="flex items-center justify-between gap-4 border-b border-neutral-100 pb-4 mb-4">
+              <div>
+                <p className="font-semibold text-neutral-900">Currency</p>
+                <p className="mt-1 text-sm text-neutral-500">Select the currency symbol for your menu prices.</p>
+              </div>
+              <select
+                value={restaurantSettings?.currency || 'USD'}
+                onChange={(e) => handleCurrencyChange(e.target.value)}
+                disabled={isRestaurantLoading || isRestaurantUpdating || !restaurantSettings}
+                className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold text-neutral-700 outline-none transition focus:border-green-500"
+              >
+                <option value="USD">USD ($)</option>
+                <option value="LKR">LKR (Rs.)</option>
+              </select>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 opacity-50 pointer-events-none">
+              <div>
+                <p className="font-semibold text-neutral-900">Dark Mode</p>
+                <p className="mt-1 text-sm text-neutral-500">Coming soon</p>
+              </div>
+              <Toggle on={false} onToggle={() => { }} disabled={true} />
+            </div>
+          </div>
+
+          {/* Danger Zone */}
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
+            <p className="text-xs font-semibold uppercase tracking-widest text-red-500 mb-3">Danger Zone</p>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-semibold text-red-800">Delete All Menu Data</p>
+                <p className="text-sm text-red-600 mt-1">Permanently delete your published menu. This cannot be undone.</p>
+              </div>
+              <button
+                disabled={savedMenus.length === 0}
+                onClick={() => savedMenus.length > 0 && setDeleteConfirmId(savedMenus[0].localId)}
+                className="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
