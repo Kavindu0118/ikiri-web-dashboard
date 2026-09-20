@@ -1527,6 +1527,7 @@ function Editor() {
           slug: '',
           website: '',
           isActive: true,
+          currency: 'LKR',
           allowOnlineOrders: false,
           serviceFeeEnabled: false,
           serviceFeePercentage: 10,
@@ -2620,7 +2621,7 @@ function MenuViewer() {
           dateTime: new Date().toLocaleString(),
           items: orderData.items || [],
           totalAmount: Number(orderData.totalAmount || 0),
-          currency: orderData.currency || 'USD',
+          currency: orderData.currency || 'LKR',
           tableNo: orderData.tableNo || null,
           roomNo: orderData.roomNo || null,
           orderType: orderData.orderType || (orderData.roomNo ? 'room' : orderData.tableNo ? 'table' : 'online'),
@@ -2709,7 +2710,7 @@ function MenuViewer() {
       restaurantId: menuData.restaurantId,
       restaurantName: menuData.restaurantName || '',
       currency:
-        restaurantSettings?.currency || 'USD',
+        restaurantSettings?.currency || 'LKR',
       deviceId,
       customerName:
         customerName.trim(),

@@ -46,6 +46,15 @@ export const getDateRangeBounds = (filterRange, customStartStr, customEndStr) =>
   } else if (filterRange === '30d' || filterRange === '30days') {
     startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29, 0, 0, 0, 0)
     endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+  } else if (filterRange === '3m' || filterRange === '3months' || filterRange === '90d') {
+    startDate = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate(), 0, 0, 0, 0)
+    endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+  } else if (filterRange === '6m' || filterRange === '6months' || filterRange === '180d') {
+    startDate = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate(), 0, 0, 0, 0)
+    endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+  } else if (filterRange === '12m' || filterRange === '12months' || filterRange === '1y' || filterRange === '365d') {
+    startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate(), 0, 0, 0, 0)
+    endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
   } else if (filterRange === 'this_month') {
     startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
     endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)

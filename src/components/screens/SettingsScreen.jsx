@@ -1002,7 +1002,7 @@ export default function SettingsScreen({
                 <p className="mt-1 text-sm text-neutral-500">Select the currency symbol for your menu prices.</p>
               </div>
               <select
-                value={restaurantSettings?.currency || 'USD'}
+                value={restaurantSettings?.currency || 'LKR'}
                 onChange={(e) => handleCurrencyChange(e.target.value)}
                 disabled={isRestaurantLoading || isRestaurantUpdating || !restaurantSettings}
                 className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-semibold text-neutral-700 outline-none transition focus:border-green-500"

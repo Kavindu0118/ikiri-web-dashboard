@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { db, isFirebaseConfigured } from '../../lib/firebase'
 import { jsPDF } from 'jspdf'
 import { IconAnalytics, IconDownload, IconFileText, IconSearch } from '../Icons'
+import RevenueBarChart from '../analytics/RevenueBarChart'
 import {
   getDateRangeBounds,
   fetchOrdersByDateRange,
@@ -131,7 +132,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     }
   }
 
-  // Strategy 1: Server-side date-bounded order fetch
+  // Strategy 1: Server-side order fetch
   const fetchBackupData = useCallback(async () => {
     if (!isFirebaseConfigured || !db || !targetRestaurantId) {
       setLoading(false)
@@ -142,8 +143,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     setError(null)
 
     try {
-      const { startDate, endDate } = getDateRangeBounds(filterRange, customStartDateTime, customEndDateTime)
-      const fetchedOrders = await fetchOrdersByDateRange(db, targetRestaurantId, startDate, endDate)
+      const fetchedOrders = await fetchOrdersByDateRange(db, targetRestaurantId, null, null, 5000)
       setOrders(fetchedOrders)
     } catch (err) {
       console.error('Error fetching backup database orders:', err)
@@ -151,7 +151,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     } finally {
       setLoading(false)
     }
-  }, [targetRestaurantId, filterRange, customStartDateTime, customEndDateTime])
+  }, [targetRestaurantId])
 
   useEffect(() => {
     fetchBackupData()
@@ -211,6 +211,15 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       } else if (filterRange === '30d' || filterRange === '30days') {
         const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29, 0, 0, 0, 0)
         return orderDate >= thirtyDaysAgo
+      } else if (filterRange === '3m' || filterRange === '3months') {
+        const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate(), 0, 0, 0, 0)
+        return orderDate >= threeMonthsAgo
+      } else if (filterRange === '6m' || filterRange === '6months') {
+        const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate(), 0, 0, 0, 0)
+        return orderDate >= sixMonthsAgo
+      } else if (filterRange === '12m' || filterRange === '12months') {
+        const twelveMonthsAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate(), 0, 0, 0, 0)
+        return orderDate >= twelveMonthsAgo
       } else if (filterRange === 'custom') {
         if (!customStartDateTime && !customEndDateTime) return true
         let match = true
@@ -655,6 +664,15 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
         const thirtyDaysAgo = new Date()
         thirtyDaysAgo.setDate(now.getDate() - 30)
         return orderDate >= thirtyDaysAgo
+      } else if (filterRange === '3m') {
+        const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate(), 0, 0, 0, 0)
+        return orderDate >= threeMonthsAgo
+      } else if (filterRange === '6m') {
+        const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate(), 0, 0, 0, 0)
+        return orderDate >= sixMonthsAgo
+      } else if (filterRange === '12m') {
+        const twelveMonthsAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate(), 0, 0, 0, 0)
+        return orderDate >= twelveMonthsAgo
       } else if (filterRange === 'custom') {
         if (!customStartDateTime && !customEndDateTime) return true
         let match = true
@@ -913,6 +931,12 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       dateRangeLabel = 'Last 7 Days'
     } else if (filterRange === '30d') {
       dateRangeLabel = 'Last 30 Days'
+    } else if (filterRange === '3m') {
+      dateRangeLabel = 'Last 3 Months'
+    } else if (filterRange === '6m') {
+      dateRangeLabel = 'Last 6 Months'
+    } else if (filterRange === '12m') {
+      dateRangeLabel = 'Last 12 Months'
     } else if (filterRange === 'custom') {
       if (customStartDateTime && customEndDateTime) {
         dateRangeLabel = `${customStartDateTime.replace('T', ' ')} to ${customEndDateTime.replace('T', ' ')}`
@@ -1954,6 +1978,9 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                     { id: 'today', label: 'Today' },
                     { id: '7d', label: '7 Days' },
                     { id: '30d', label: '30 Days' },
+                    { id: '3m', label: '3M' },
+                    { id: '6m', label: '6M' },
+                    { id: '12m', label: '12M' },
                     { id: 'all', label: 'All' },
                     { id: 'custom', label: 'Custom Range', isCustom: true },
                   ].map(({ id, label, isCustom }) => (
@@ -3189,6 +3216,9 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
               { id: 'today', label: 'Today' },
               { id: '7d', label: '7 Days' },
               { id: '30d', label: '30 Days' },
+              { id: '3m', label: '3 Months' },
+              { id: '6m', label: '6 Months' },
+              { id: '12m', label: '12 Months' },
               { id: 'all', label: 'All' },
               { id: 'custom', label: 'Custom', isCustom: true },
             ].map(({ id, label, isCustom }) => (
@@ -3372,6 +3402,15 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           </div>
         </div>
       </div>
+
+      {/* Revenue Bar Chart (Synced with top date range, Daily / Monthly toggle) */}
+      <RevenueBarChart
+        orders={filteredOrders}
+        filterRange={filterRange}
+        customStart={customStartDateTime}
+        customEnd={customEndDateTime}
+        currencySymbol={currencySymbol}
+      />
 
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
