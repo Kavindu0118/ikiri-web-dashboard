@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Routes, Route, useParams } from 'react-router-dom'
-import { auth, signInWithGoogle, logoutUser } from './lib/firebase'
+import { auth, logoutUser } from './lib/firebase'
 import { onAuthStateChanged } from 'firebase/auth'
 import QRCode from 'qrcode'
 import { cloneTemplate, findTemplateById, menuTemplates } from './data/menuTemplates'
@@ -399,8 +399,8 @@ function Editor() {
                   </button>
                 </div>
               ) : (
-                <button onClick={signInWithGoogle} className="rounded-lg bg-neutral-900 px-[0.875rem] py-2 text-sm font-semibold text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2">
-                  Sign in with Google
+                <button onClick={logoutUser} className="rounded-lg bg-neutral-900 px-[0.875rem] py-2 text-sm font-semibold text-white shadow-sm hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-neutral-900 focus:ring-offset-2">
+                  Sign Out
                 </button>
               )}
             </div>

@@ -1,8 +1,7 @@
-import LoginModal from "./LoginModal";
+import LoginModal from './LoginModal'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Routes, Route, useParams, useSearchParams } from 'react-router-dom'
-import { auth, signInWithGoogle, logoutUser } from './lib/firebase'
-import { onAuthStateChanged } from 'firebase/auth'
+import { APP_RESTAURANT_ID, getAppSessionUser, logoutUser } from './lib/firebase'
 import QRCode from 'qrcode'
 import { jsPDF } from 'jspdf'
 import { cloneTemplate, findTemplateById, menuTemplates } from './data/menuTemplates'
@@ -1256,8 +1255,14 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
 
 
 function Editor() {
-  const [user, setUser] = useState(null)
-  const [profile, setProfile] = useState(null)
+  const initialAppUser = getAppSessionUser()
+  const [user, setUser] = useState(initialAppUser)
+  const [profile, setProfile] = useState({
+    uid: initialAppUser.uid,
+    ownerName: initialAppUser.displayName,
+    email: initialAppUser.email,
+    restaurantId: APP_RESTAURANT_ID,
+  })
   const [activeSection, setActiveSection] = useState('dashboard')
   const [showBuilder, setShowBuilder] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
@@ -1401,16 +1406,16 @@ function Editor() {
   const [rooms, setRooms] = useState([])
   const [isRestaurantLoading, setIsRestaurantLoading] = useState(false)
   const [isRestaurantUpdating, setIsRestaurantUpdating] = useState(false)
-  const restaurantId = profile?.restaurantId || null
+  const restaurantId = profile?.restaurantId || APP_RESTAURANT_ID
 
   // Waiter codes state
   const [waiterCodes, setWaiterCodes] = useState([])
   const [isWaiterCodesLoading, setIsWaiterCodesLoading] = useState(false)
   const [isWaiterCodesUpdating, setIsWaiterCodesUpdating] = useState(false)
 
-  // Auth
+  // Auth session is fixed to the required dashboard user context.
   useEffect(() => {
-    if (auth) return onAuthStateChanged(auth, setUser)
+    setUser(getAppSessionUser())
   }, [])
 
   //toggle service fee
