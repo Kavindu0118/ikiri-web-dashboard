@@ -1,7 +1,8 @@
 import LoginModal from './LoginModal'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Routes, Route, useParams, useSearchParams } from 'react-router-dom'
-import { APP_RESTAURANT_ID, getAppSessionUser, logoutUser } from './lib/firebase'
+import { auth, signInWithGoogle, logoutUser } from './lib/firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 import QRCode from 'qrcode'
 import { jsPDF } from 'jspdf'
 import { cloneTemplate, findTemplateById, menuTemplates } from './data/menuTemplates'
@@ -1255,14 +1256,8 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
 
 
 function Editor() {
-  const initialAppUser = getAppSessionUser()
-  const [user, setUser] = useState(initialAppUser)
-  const [profile, setProfile] = useState({
-    uid: initialAppUser.uid,
-    ownerName: initialAppUser.displayName,
-    email: initialAppUser.email,
-    restaurantId: APP_RESTAURANT_ID,
-  })
+  const [user, setUser] = useState(null)
+  const [profile, setProfile] = useState(null)
   const [activeSection, setActiveSection] = useState('dashboard')
   const [showBuilder, setShowBuilder] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
@@ -1406,16 +1401,22 @@ function Editor() {
   const [rooms, setRooms] = useState([])
   const [isRestaurantLoading, setIsRestaurantLoading] = useState(false)
   const [isRestaurantUpdating, setIsRestaurantUpdating] = useState(false)
-  const restaurantId = profile?.restaurantId || APP_RESTAURANT_ID
+  const restaurantId = profile?.restaurantId || null
 
   // Waiter codes state
   const [waiterCodes, setWaiterCodes] = useState([])
   const [isWaiterCodesLoading, setIsWaiterCodesLoading] = useState(false)
   const [isWaiterCodesUpdating, setIsWaiterCodesUpdating] = useState(false)
 
-  // Auth session is fixed to the required dashboard user context.
+  // Auth
   useEffect(() => {
-    setUser(getAppSessionUser())
+    if (!auth) return
+    return onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser)
+      if (!currentUser) {
+        setProfile(null)
+      }
+    })
   }, [])
 
   //toggle service fee
