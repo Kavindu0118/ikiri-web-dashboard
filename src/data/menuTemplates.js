@@ -14,11 +14,12 @@ const createTemplate = ({
   sections,
 })
 
-const item = (id, name, description, price) => ({
+const item = (id, name, description, price, addOns = []) => ({
   id,
   name,
   description,
   price,
+  addOns,
 })
 
 export const menuTemplates = [

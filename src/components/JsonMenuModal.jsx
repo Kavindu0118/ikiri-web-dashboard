@@ -2,10 +2,47 @@ import { useState, useMemo } from 'react'
 import { IconDownload, IconFileText, IconX } from './Icons'
 
 export const SAMPLE_MENU_JSON = {
-  menuTitle: "Signature Restaurant Menu",
+  menuTitle: "Main Dining Menu",
   restaurantName: "Surf House Beach Club",
   notes: "All prices include service and tax.",
   sections: [
+    {
+      title: "Burgers",
+      items: [
+        {
+          id: "item_burger_01",
+          name: "Classic Beef Burger",
+          price: "1200",
+          description: "Juicy beef patty with fresh lettuce and secret sauce",
+          imageUrl: "",
+          addOns: [
+            {
+              id: "addon_cheese",
+              name: "Extra Cheese",
+              price: 150.0
+            },
+            {
+              id: "addon_bacon",
+              name: "Crispy Bacon",
+              price: 250.0
+            },
+            {
+              id: "addon_egg",
+              name: "Fried Egg",
+              price: 100.0
+            }
+          ]
+        },
+        {
+          id: "item_coke_01",
+          name: "Coca Cola 330ml",
+          price: "250",
+          description: "Chilled can",
+          imageUrl: "",
+          addOns: []
+        }
+      ]
+    },
     {
       title: "Breakfast & Bowls",
       items: [
@@ -13,19 +50,18 @@ export const SAMPLE_MENU_JSON = {
           name: "Tropical Acai Bowl",
           price: "1450.00",
           description: "Organic acai blended with banana, topped with kiwi, chia seeds and roasted granola.",
-          imageUrl: ""
+          imageUrl: "",
+          addOns: [
+            { id: "addon_honey", name: "Extra Organic Honey", price: 100.0 },
+            { id: "addon_chia", name: "Extra Chia Seeds", price: 150.0 }
+          ]
         },
         {
           name: "Avocado Sourdough Toast",
           price: "1250.00",
           description: "Poached eggs, mashed avocado, feta crumble and chili flakes on artisanal sourdough.",
-          imageUrl: ""
-        },
-        {
-          name: "Classic Shakshuka",
-          price: "1350.00",
-          description: "Eggs gently poached in a spiced tomato, pepper and onion sauce with warm pita.",
-          imageUrl: ""
+          imageUrl: "",
+          addOns: []
         }
       ],
       subcategories: [
@@ -36,65 +72,42 @@ export const SAMPLE_MENU_JSON = {
               name: "Fresh Orange Juice",
               price: "850.00",
               description: "100% cold-pressed local sweet oranges.",
-              imageUrl: ""
-            },
-            {
-              name: "Green Detox Glow",
-              price: "950.00",
-              description: "Cucumber, green apple, celery, spinach, ginger and lime.",
-              imageUrl: ""
+              imageUrl: "",
+              addOns: []
             }
           ]
         }
       ]
-    },
-    {
-      title: "Mains & Burgers",
-      items: [
-        {
-          name: "Surf House Wagyu Burger",
-          price: "2450.00",
-          description: "Grilled wagyu beef patty, smoked cheddar, bacon jam, brioche bun with crispy fries.",
-          imageUrl: ""
-        },
-        {
-          name: "Grilled Mahi-Mahi Fillet",
-          price: "2650.00",
-          description: "Fresh ocean catch served with lemon-garlic butter, asparagus and mashed potatoes.",
-          imageUrl: ""
-        },
-        {
-          name: "Creamy Truffle Pasta",
-          price: "2100.00",
-          description: "Handmade fettuccine with wild mushroom medley and black truffle cream sauce.",
-          imageUrl: ""
-        }
-      ]
-    },
-    {
-      title: "Beverages & Cocktails",
-      items: [
-        {
-          name: "Iced Coconut Latte",
-          price: "850.00",
-          description: "Double espresso shot with fresh creamy coconut milk over ice.",
-          imageUrl: ""
-        },
-        {
-          name: "Signature Passion Mojito",
-          price: "1650.00",
-          description: "White rum, fresh passion fruit pulp, crushed mint, lime and sparkling soda.",
-          imageUrl: ""
-        },
-        {
-          name: "Chilled King Coconut",
-          price: "450.00",
-          description: "Fresh whole king coconut served chilled.",
-          imageUrl: ""
-        }
-      ]
     }
   ]
+}
+
+const normalizeAddOns = (rawAddOns) => {
+  if (!Array.isArray(rawAddOns)) return []
+  return rawAddOns
+    .map((a, aIdx) => {
+      if (typeof a === 'string') {
+        return {
+          id: `addon_${aIdx + 1}`,
+          name: a.trim(),
+          price: 0,
+        }
+      }
+      if (!a || typeof a !== 'object') return null
+      const cleanPrice =
+        a.price !== undefined && a.price !== null
+          ? typeof a.price === 'number'
+            ? a.price
+            : parseFloat(String(a.price).replace(/[^0-9.]/g, '')) || 0
+          : 0
+      return {
+        id: a.id ? String(a.id) : `addon_${Date.now()}_${aIdx}`,
+        name: String(a.name || a.title || 'Add-on').trim(),
+        price: cleanPrice,
+      }
+    })
+    .filter(Boolean)
+    .filter((a) => a.name)
 }
 
 export function normalizeMenuJson(parsedData) {
@@ -163,7 +176,8 @@ export function normalizeMenuJson(parsedData) {
         name: String(it.name || it.title || it.itemName || 'Untitled Item').trim(),
         price: it.price !== undefined && it.price !== null ? String(it.price).replace(/[^0-9.]/g, '') : '',
         description: String(it.description || it.desc || '').trim(),
-        imageUrl: String(it.imageUrl || it.image || '').trim()
+        imageUrl: String(it.imageUrl || it.image || '').trim(),
+        addOns: normalizeAddOns(it.addOns || it.addons)
       })) : []
       return {
         id: subId,
@@ -177,7 +191,8 @@ export function normalizeMenuJson(parsedData) {
       name: String(it.name || it.title || it.itemName || 'Untitled Item').trim(),
       price: it.price !== undefined && it.price !== null ? String(it.price).replace(/[^0-9.]/g, '') : '',
       description: String(it.description || it.desc || '').trim(),
-      imageUrl: String(it.imageUrl || it.image || '').trim()
+      imageUrl: String(it.imageUrl || it.image || '').trim(),
+      addOns: normalizeAddOns(it.addOns || it.addons)
     })) : []
 
     return {
@@ -583,7 +598,8 @@ export default function JsonMenuModal({
                 <ul className="list-disc pl-5 space-y-1 text-neutral-600 text-[11px]">
                   <li><code>menuTitle</code> <em>(Optional)</em>: Main title of your menu (e.g., "Dinner Menu").</li>
                   <li><code>sections</code> <em>(Array)</em>: List of categories/sections. Each must have a <code>title</code> and an <code>items</code> array.</li>
-                  <li><code>items</code> <em>(Array)</em>: List of food/beverage items. Required: <code>name</code> and <code>price</code>. Optional: <code>description</code>, <code>imageUrl</code>.</li>
+                  <li><code>items</code> <em>(Array)</em>: List of food/beverage items. Required: <code>name</code> and <code>price</code>. Optional: <code>description</code>, <code>imageUrl</code>, <code>addOns</code>.</li>
+                  <li><code>addOns</code> <em>(Optional Array)</em>: Add-on options/extras for each item. Each add-on has <code>id</code>, <code>name</code>, and <code>price</code> (e.g., <code>[&#123; "id": "addon_cheese", "name": "Extra Cheese", "price": 150.0 &#125;]</code>).</li>
                   <li><code>subcategories</code> <em>(Optional Array)</em>: Nested subcategories inside a section with their own <code>items</code>.</li>
                   <li><strong>Alternative Formats</strong>: You can also pass a direct array of items with a <code>category</code> property (e.g. <code>[&#123; "name": "Burger", "category": "Mains", "price": 1200 &#125;]</code>).</li>
                 </ul>

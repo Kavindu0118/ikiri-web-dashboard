@@ -28,6 +28,38 @@ const slugify = (value = '') =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)+/g, '')
 
+const normalizeMenuSections = (sections) => {
+  if (!Array.isArray(sections)) return []
+  return sections.map((sec) => ({
+    ...sec,
+    items: Array.isArray(sec.items)
+      ? sec.items.map((it) => ({
+          ...it,
+          addOns: Array.isArray(it.addOns)
+            ? it.addOns
+            : Array.isArray(it.addons)
+            ? it.addons
+            : [],
+        }))
+      : [],
+    subcategories: Array.isArray(sec.subcategories)
+      ? sec.subcategories.map((sub) => ({
+          ...sub,
+          items: Array.isArray(sub.items)
+            ? sub.items.map((it) => ({
+                ...it,
+                addOns: Array.isArray(it.addOns)
+                  ? it.addOns
+                  : Array.isArray(it.addons)
+                  ? it.addons
+                  : [],
+              }))
+            : [],
+        }))
+      : [],
+  }))
+}
+
 const normalizeMenu = ({ restaurantId, restaurantData, menuData }) => ({
   id: restaurantData.slug || restaurantId,
   restaurantId,
@@ -37,7 +69,7 @@ const normalizeMenu = ({ restaurantId, restaurantData, menuData }) => ({
   templateLabel: menuData.templateLabel || 'Minimal Cafe',
   menuTitle: menuData.menuTitle || menuData.title || 'Untitled Menu',
   notes: menuData.notes || '',
-  sections: menuData.sections || [],
+  sections: normalizeMenuSections(menuData.sections),
   isPublished: Boolean(menuData.isPublished),
   updatedAt: menuData.updatedAt || restaurantData.updatedAt || null,
 })

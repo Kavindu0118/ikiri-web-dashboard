@@ -56,6 +56,7 @@ const createEmptyItem = () => ({
   description: '',
   price: '',
   imageUrl: '',
+  addOns: [],
 })
 
 const createEmptySection = () => ({
@@ -224,6 +225,15 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
           </div>
         </div>
         <p className="text-sm text-neutral-600 line-clamp-2">{item.description || 'No description'}</p>
+        {Array.isArray(item.addOns) && item.addOns.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap gap-1">
+            {item.addOns.map((addon) => (
+              <span key={addon.id || addon.name} className="text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded border border-neutral-200/80 font-medium">
+                + {addon.name} ({formatPrice(addon.price)})
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -238,6 +248,15 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
           <div>
             <p className="font-medium text-neutral-900">{item.name || 'Untitled Item'}</p>
             <p className="text-neutral-600">{item.description || 'No description'}</p>
+            {Array.isArray(item.addOns) && item.addOns.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {item.addOns.map((addon) => (
+                  <span key={addon.id || addon.name} className="text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded border border-neutral-200/80 font-medium">
+                    + {addon.name} ({formatPrice(addon.price)})
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <p className="font-mono text-neutral-800">{formatPrice(item.price)}</p>
@@ -337,6 +356,15 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
             <p className="text-xs text-neutral-500 mt-0.5 line-clamp-2 leading-relaxed">
               {item.description || 'No description'}
             </p>
+            {Array.isArray(item.addOns) && item.addOns.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {item.addOns.map((addon) => (
+                  <span key={addon.id || addon.name} className="text-[9px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded border border-neutral-200 font-medium">
+                    + {addon.name} ({formatPrice(addon.price)})
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           {canOrder && (
             <button
@@ -585,6 +613,37 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
     }))
   }
 
+  const handleAddAddOn = () => {
+    setEditingItem((prev) => ({
+      ...prev,
+      addOns: [
+        ...(prev?.addOns || []),
+        {
+          id: `addon_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          name: '',
+          price: '',
+        },
+      ],
+    }))
+  }
+
+  const handleUpdateAddOn = (addonId, field, value) => {
+    setEditingItem((prev) => ({
+      ...prev,
+      addOns: (prev?.addOns || []).map((a) => {
+        if (a.id !== addonId) return a
+        return { ...a, [field]: value }
+      }),
+    }))
+  }
+
+  const handleRemoveAddOn = (addonId) => {
+    setEditingItem((prev) => ({
+      ...prev,
+      addOns: (prev?.addOns || []).filter((a) => a.id !== addonId),
+    }))
+  }
+
   const handleSaveItem = (e) => {
     e.preventDefault()
     if (!editingItem) return
@@ -597,7 +656,27 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
       return
     }
 
-    const { id, name, description, price, imageUrl, sectionId, subcategoryId } = editingItem
+    const { id, name, description, price, imageUrl, sectionId, subcategoryId, addOns } = editingItem
+
+    const cleanedAddOns = (addOns || [])
+      .map((a, idx) => ({
+        id: a.id ? String(a.id) : `addon_${Date.now()}_${idx}`,
+        name: String(a.name || '').trim(),
+        price:
+          typeof a.price === 'number'
+            ? a.price
+            : parseFloat(String(a.price || 0).replace(/[^0-9.]/g, '')) || 0,
+      }))
+      .filter((a) => a.name)
+
+    const savedItemData = {
+      id,
+      name,
+      description,
+      price,
+      imageUrl,
+      addOns: cleanedAddOns,
+    }
 
     updateSectionList((sections) => {
       // 1. Remove the item from its current location
@@ -621,14 +700,14 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
               if (sub.id !== subcategoryId) return sub
               return {
                 ...sub,
-                items: [...(sub.items || []), { id, name, description, price, imageUrl }]
+                items: [...(sub.items || []), savedItemData]
               }
             })
           }
         } else {
           return {
             ...s,
-            items: [...(s.items || []), { id, name, description, price, imageUrl }]
+            items: [...(s.items || []), savedItemData]
           }
         }
       })
@@ -653,6 +732,12 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
   }
 
   const renderListItemRow = (item, sectionId, subcategoryId) => {
+    const addOnsList = Array.isArray(item.addOns)
+      ? item.addOns
+      : Array.isArray(item.addons)
+      ? item.addons
+      : []
+
     return (
       <div key={item.id} className="flex items-center gap-3 p-3 rounded-xl border border-neutral-200 hover:border-green-300 bg-white hover:bg-neutral-50/50 shadow-sm transition duration-150 mb-2 group">
         {/* Details */}
@@ -661,6 +746,13 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
             <h4 className="font-semibold text-neutral-800 text-sm truncate">{item.name || 'Untitled Item'}</h4>
             <span className="text-sm font-bold text-neutral-900">{currencySymbol}{item.price || '0.00'}</span>
           </div>
+          {addOnsList.length > 0 && (
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-full">
+                ✨ +{addOnsList.length} add-on{addOnsList.length > 1 ? 's' : ''} ({addOnsList.map((a) => a.name).slice(0, 3).join(', ')}{addOnsList.length > 3 ? '…' : ''})
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -675,7 +767,8 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
                 price: item.price,
                 imageUrl: item.imageUrl,
                 sectionId: sectionId,
-                subcategoryId: subcategoryId || ''
+                subcategoryId: subcategoryId || '',
+                addOns: addOnsList.map((a) => ({ ...a })),
               })
               setIsAddingNew(false)
             }}
@@ -877,6 +970,89 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
                   </label>
                 </div>
 
+                {/* Add-ons / Extras */}
+                <div className="border border-neutral-200/90 bg-neutral-50/60 rounded-xl p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-neutral-800">Add-ons & Extras</span>
+                        {editingItem.addOns && editingItem.addOns.length > 0 && (
+                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.2 rounded-full">
+                            {editingItem.addOns.length}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-neutral-500 mt-0.5">
+                        Optional customer choices for this item (e.g. Extra Cheese, Bacon, Fried Egg)
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddAddOn}
+                      className="btn-ghost !text-xs !py-1 !px-2.5 rounded-lg border border-neutral-300 hover:border-green-500 hover:text-green-700 hover:bg-green-50 flex items-center gap-1 font-semibold text-neutral-700 transition"
+                    >
+                      <IconPlus className="w-3 h-3 text-green-600" />
+                      <span>Add Add-on</span>
+                    </button>
+                  </div>
+
+                  {(!editingItem.addOns || editingItem.addOns.length === 0) ? (
+                    <div className="text-center py-3 px-2 bg-white rounded-lg border border-dashed border-neutral-200 text-neutral-400 text-xs">
+                      No add-ons for this item yet. Click <span className="font-semibold text-green-700">"+ Add Add-on"</span> to offer options like Extra Cheese or Bacon.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {editingItem.addOns.map((addon, aIdx) => (
+                        <div
+                          key={addon.id || aIdx}
+                          className="flex items-center gap-2 p-2 rounded-lg bg-white border border-neutral-200/80 shadow-2xs"
+                        >
+                          {/* Add-on Name */}
+                          <div className="flex-1 min-w-0">
+                            <input
+                              type="text"
+                              value={addon.name}
+                              onChange={(e) => handleUpdateAddOn(addon.id, 'name', e.target.value)}
+                              placeholder="Add-on Name (e.g. Extra Cheese)"
+                              className="input-field text-xs py-1 px-2.5 bg-neutral-50 focus:bg-white w-full"
+                              required
+                            />
+                          </div>
+
+                          {/* Add-on Price */}
+                          <div className="w-32 flex-shrink-0">
+                            <div className="input-wrapper py-1 px-2 bg-neutral-50 flex items-center rounded-lg border border-neutral-200 focus-within:bg-white focus-within:border-green-500">
+                              <span className="text-xs font-medium text-neutral-500 mr-1">{currencySymbol}</span>
+                              <input
+                                type="text"
+                                value={addon.price !== undefined && addon.price !== null ? addon.price : ''}
+                                onChange={(e) => {
+                                  let val = e.target.value.replace(/[^0-9.]/g, '')
+                                  const parts = val.split('.')
+                                  if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('')
+                                  handleUpdateAddOn(addon.id, 'price', val)
+                                }}
+                                placeholder="150.0"
+                                className="w-full text-xs outline-none bg-transparent"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Delete */}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAddOn(addon.id)}
+                            className="p-1 rounded-lg text-neutral-400 hover:text-red-500 hover:bg-red-50 transition flex-shrink-0"
+                            title="Remove add-on"
+                          >
+                            <IconTrash className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Image Upload */}
                 <div className="flex items-center gap-4 bg-white p-3 rounded-xl border border-neutral-200">
                   <div className="flex-shrink-0">
@@ -993,7 +1169,8 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
                           price: '',
                           imageUrl: '',
                           sectionId: draftMenu.sections[0].id,
-                          subcategoryId: ''
+                          subcategoryId: '',
+                          addOns: []
                         })
                         setIsAddingNew(true)
                       }}
