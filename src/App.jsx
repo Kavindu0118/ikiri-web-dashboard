@@ -70,11 +70,12 @@ const createEmptySection = () => ({
 
 // ─── TemplateMenuPreview ──────────────────────────────────────────────────────
 function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = false, onAddToCart }) {
-  if (!menu) return null
-  const canOrder = orderingEnabled && typeof onAddToCart === 'function'
+  const isQrMenu = typeof onAddToCart === 'function'
+  const canOrder = orderingEnabled && isQrMenu
 
   const [activeSectionId, setActiveSectionId] = useState('all')
   const [activeSubcategoryId, setActiveSubcategoryId] = useState('all')
+  const [menuSearchQuery, setMenuSearchQuery] = useState('')
 
   const formatPrice = (price) => {
     if (!price) return '-'
@@ -113,6 +114,8 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
         }
       })
   }, [menu?.sections])
+
+  if (!menu) return null
 
   const validActiveSectionId = (activeSectionId === 'all' || sanitizedSections.some((s) => s.id === activeSectionId))
     ? activeSectionId
@@ -189,6 +192,7 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
   }
 
   // Filter sections and subcategories for rendering
+  const normalizedSearchQuery = menuSearchQuery.trim().toLowerCase()
   const filteredSections = sanitizedSections.map((section) => {
     if (validActiveSectionId !== 'all' && section.id !== validActiveSectionId) {
       return null
@@ -203,11 +207,65 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
     }
     return section
   }).filter(Boolean)
+    .map((section) => {
+      const matchesSearch = (item) =>
+        `${item.name || ''} ${item.description || ''}`
+          .toLowerCase()
+          .includes(normalizedSearchQuery)
+      const subcategories = (section.subcategories || []).map((subcategory) => ({
+        ...subcategory,
+        items: (subcategory.items || []).filter(matchesSearch),
+      }))
+      const visibleSubcategories = section.subcategories?.length
+        ? subcategories.filter((subcategory) => subcategory.items.length > 0)
+        : []
+      const items = section.subcategories?.length
+        ? []
+        : (section.items || []).filter(matchesSearch)
+
+      return {
+        ...section,
+        items,
+        subcategories: visibleSubcategories,
+      }
+    })
+    .filter((section) => section.subcategories.length > 0 || section.items.length > 0)
 
   const filteredMenu = {
     ...menu,
     sections: filteredSections
   }
+
+  const renderSearchBar = () => canOrder && (
+    <label className="relative block">
+      <span className="sr-only">Search menu items</span>
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+      >
+        <circle cx="11" cy="11" r="7" strokeWidth="2" />
+        <path strokeLinecap="round" strokeWidth="2" d="m16 16 4 4" />
+      </svg>
+      <input
+        type="search"
+        value={menuSearchQuery}
+        onChange={(event) => setMenuSearchQuery(event.target.value)}
+        placeholder="Search menu items..."
+        className="w-full rounded-xl border border-neutral-300 bg-white py-2.5 pl-10 pr-3 text-sm text-neutral-900 outline-none transition placeholder:text-neutral-400 focus:border-green-600 focus:ring-2 focus:ring-green-600/20"
+      />
+    </label>
+  )
+
+  const renderNoSearchResults = () => (
+    canOrder && normalizedSearchQuery && filteredMenu.sections.length === 0 ? (
+      <p className="rounded-xl border border-dashed border-neutral-300 bg-white p-5 text-center text-sm text-neutral-500">
+        No menu items found for “{menuSearchQuery.trim()}”.
+      </p>
+    ) : null
+  )
 
   const renderChefItem = (item) => (
     <div key={item.id} className="border-b border-neutral-200 pb-2 last:border-none last:pb-0 flex items-start gap-4">
@@ -274,23 +332,27 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
   if (menu.templateId === 'chef-signature') {
     return (
       <div className="rounded-2xl border border-neutral-300 bg-neutral-100/70 p-5 sm:p-7">
-        <div className="border-b border-neutral-300 pb-4 mb-5">
-          <h4 className="text-2xl font-semibold text-neutral-900">{menu.restaurantName || 'Untitled Restaurant'}</h4>
-          {(menu.restaurantAddress || menu.restaurantPhone || menu.restaurantWebsite) && (
-            <div className="mt-2 text-sm text-neutral-600 space-y-0.5">
-              {menu.restaurantAddress && <p>{menu.restaurantAddress}</p>}
-              {menu.restaurantPhone && <p>{menu.restaurantPhone}</p>}
-              {menu.restaurantWebsite && (
-                <p>
-                  <a href={menu.restaurantWebsite.startsWith('http') ? menu.restaurantWebsite : `https://${menu.restaurantWebsite}`} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:text-green-700 hover:underline transition">
-                    {menu.restaurantWebsite}
-                  </a>
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+        <div className="mb-5">{renderSearchBar()}</div>
+        {!isQrMenu && (
+          <div className="border-b border-neutral-300 pb-4 mb-5">
+            <h4 className="text-2xl font-semibold text-neutral-900">{menu.restaurantName || 'Untitled Restaurant'}</h4>
+            {(menu.restaurantAddress || menu.restaurantPhone || menu.restaurantWebsite) && (
+              <div className="mt-2 text-sm text-neutral-600 space-y-0.5">
+                {menu.restaurantAddress && <p>{menu.restaurantAddress}</p>}
+                {menu.restaurantPhone && <p>{menu.restaurantPhone}</p>}
+                {menu.restaurantWebsite && (
+                  <p>
+                    <a href={menu.restaurantWebsite.startsWith('http') ? menu.restaurantWebsite : `https://${menu.restaurantWebsite}`} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:text-green-700 hover:underline transition">
+                      {menu.restaurantWebsite}
+                    </a>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {renderFilterTabs()}
+        {renderNoSearchResults()}
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           {filteredMenu.sections.map((section) => (
             <section key={section.id} className="rounded-xl border border-neutral-300 bg-white p-4">
@@ -387,21 +449,28 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
         className="rounded-2xl overflow-hidden"
         style={{ background: 'linear-gradient(160deg,#111827 0%,#1f2937 100%)', border: '1px solid #374151' }}
       >
+        <div className="bg-neutral-50 px-5 pt-5 sm:px-6">
+          {renderSearchBar()}
+        </div>
         {/* Dark gradient header */}
         <div className="px-6 pt-6 pb-5 flex flex-col items-center text-center">
-          <h4 className="text-2xl font-bold text-white leading-tight">{menu.restaurantName || 'Untitled Restaurant'}</h4>
-          {(menu.restaurantAddress || menu.restaurantPhone || menu.restaurantWebsite) && (
-            <div className="mt-2 text-sm text-neutral-400 space-y-0.5">
-              {menu.restaurantAddress && <p>{menu.restaurantAddress}</p>}
-              {menu.restaurantPhone && <p>{menu.restaurantPhone}</p>}
-              {menu.restaurantWebsite && (
-                <p>
-                  <a href={menu.restaurantWebsite.startsWith('http') ? menu.restaurantWebsite : `https://${menu.restaurantWebsite}`} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 hover:underline transition">
-                    {menu.restaurantWebsite}
-                  </a>
-                </p>
+          {!isQrMenu && (
+            <>
+              <h4 className="text-2xl font-bold text-white leading-tight">{menu.restaurantName || 'Untitled Restaurant'}</h4>
+              {(menu.restaurantAddress || menu.restaurantPhone || menu.restaurantWebsite) && (
+                <div className="mt-2 text-sm text-neutral-400 space-y-0.5">
+                  {menu.restaurantAddress && <p>{menu.restaurantAddress}</p>}
+                  {menu.restaurantPhone && <p>{menu.restaurantPhone}</p>}
+                  {menu.restaurantWebsite && (
+                    <p>
+                      <a href={menu.restaurantWebsite.startsWith('http') ? menu.restaurantWebsite : `https://${menu.restaurantWebsite}`} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:text-orange-300 hover:underline transition">
+                        {menu.restaurantWebsite}
+                      </a>
+                    </p>
+                  )}
+                </div>
               )}
-            </div>
+            </>
           )}
 
           {/* Dark-variant filter tabs */}
@@ -478,6 +547,7 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
 
         {/* Light card grid area */}
         <div className="bg-neutral-50 px-5 py-5 rounded-b-2xl">
+          {renderNoSearchResults()}
           {filteredMenu.sections.map((section) => (
             <div key={section.id} className="mb-6 last:mb-0">
               <div className="flex items-center gap-3 mb-4">
@@ -514,23 +584,27 @@ function TemplateMenuPreview({ menu, currencySymbol = '$', orderingEnabled = fal
 
   return (
     <div className="rounded-2xl border border-neutral-300 bg-white p-5 sm:p-7">
-      <div className="border-b border-dashed border-neutral-300 pb-4 text-center mb-5">
-        <h4 className="text-2xl font-semibold text-neutral-900">{menu.restaurantName || 'Untitled Restaurant'}</h4>
-        {(menu.restaurantAddress || menu.restaurantPhone || menu.restaurantWebsite) && (
-          <div className="mt-2 text-sm text-neutral-500 space-y-0.5 flex flex-col items-center">
-            {menu.restaurantAddress && <p>{menu.restaurantAddress}</p>}
-            {menu.restaurantPhone && <p>{menu.restaurantPhone}</p>}
-            {menu.restaurantWebsite && (
-              <p>
-                <a href={menu.restaurantWebsite.startsWith('http') ? menu.restaurantWebsite : `https://${menu.restaurantWebsite}`} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:text-green-700 hover:underline transition">
-                  {menu.restaurantWebsite}
-                </a>
-              </p>
-            )}
-          </div>
-        )}
-      </div>
+      <div className="mb-5">{renderSearchBar()}</div>
+      {!isQrMenu && (
+        <div className="border-b border-dashed border-neutral-300 pb-4 text-center mb-5">
+          <h4 className="text-2xl font-semibold text-neutral-900">{menu.restaurantName || 'Untitled Restaurant'}</h4>
+          {(menu.restaurantAddress || menu.restaurantPhone || menu.restaurantWebsite) && (
+            <div className="mt-2 text-sm text-neutral-500 space-y-0.5 flex flex-col items-center">
+              {menu.restaurantAddress && <p>{menu.restaurantAddress}</p>}
+              {menu.restaurantPhone && <p>{menu.restaurantPhone}</p>}
+              {menu.restaurantWebsite && (
+                <p>
+                  <a href={menu.restaurantWebsite.startsWith('http') ? menu.restaurantWebsite : `https://${menu.restaurantWebsite}`} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:text-green-700 hover:underline transition">
+                    {menu.restaurantWebsite}
+                  </a>
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {renderFilterTabs()}
+      {renderNoSearchResults()}
       <div className="mt-5 space-y-5">
         {filteredMenu.sections.map((section) => (
           <section key={section.id}>
