@@ -13,8 +13,10 @@ import {
 import {
   fetchCancelledAndRefundedOrders,
   fetchOpenTickets,
+  fetchVoidLogs,
   subscribeToOpenTickets,
   subscribeToTodayAuditOrders,
+  subscribeToTodayVoidLogs,
 } from '../../lib/ordersStorage'
 import { getDateRangeBounds } from '../../lib/analyticsStorage'
 
@@ -32,13 +34,14 @@ export default function CancelledRefundedOrdersScreen({
   // Data states
   const [archivedOrders, setArchivedOrders] = useState([])
   const [openTickets, setOpenTickets] = useState([])
+  const [voidLogs, setVoidLogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
 
   // Filters
-  const [filterType, setFilterType] = useState('all') // 'all' | 'voided' | 'refunded' | 'open'
+  const [filterType, setFilterType] = useState('all') // 'all' | 'voided' | 'item_voids' | 'refunded' | 'open'
   const [dateFilter, setDateFilter] = useState('today') // default to 'today' to optimize db reads
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
@@ -77,17 +80,23 @@ export default function CancelledRefundedOrdersScreen({
       try {
         // Query Firestore with exact date bounds to only read relevant records
         const { startDate, endDate } = getDateRangeBounds(dateFilter, customStart, customEnd)
-        const [archived, open] = await Promise.all([
+        const [archived, open, logs] = await Promise.all([
           fetchCancelledAndRefundedOrders(targetRestaurantId, {
             startDate,
             endDate,
             backupConfig: profile?.backupDatabase,
           }),
           fetchOpenTickets(targetRestaurantId, profile?.backupDatabase),
+          fetchVoidLogs(targetRestaurantId, {
+            startDate,
+            endDate,
+            backupConfig: profile?.backupDatabase,
+          }),
         ])
 
         setArchivedOrders(archived)
         setOpenTickets(open)
+        setVoidLogs(logs)
         setLastUpdated(new Date())
       } catch (err) {
         console.error('Error fetching audit tickets:', err)
@@ -138,9 +147,30 @@ export default function CancelledRefundedOrdersScreen({
       profile?.backupDatabase
     )
 
+    // Real-time listener for today's void logs (item reductions)
+    const unsubVoidLogs = subscribeToTodayVoidLogs(
+      targetRestaurantId,
+      (todayLogs) => {
+        if (!todayLogs || todayLogs.length === 0) return
+        setVoidLogs((prev) => {
+          const map = new Map(prev.map((l) => [l.id, l]))
+          todayLogs.forEach((l) => map.set(l.id, { ...map.get(l.id), ...l }))
+          return Array.from(map.values()).sort((a, b) => {
+            const timeA = a.date ? a.date.getTime() : 0
+            const timeB = b.date ? b.date.getTime() : 0
+            return timeB - timeA
+          })
+        })
+        setLastUpdated(new Date())
+      },
+      (err) => console.warn('Void logs live subscription:', err),
+      profile?.backupDatabase
+    )
+
     return () => {
       unsubOpen()
       unsubAudit()
+      unsubVoidLogs()
     }
   }, [targetRestaurantId, profile?.backupDatabase])
 
@@ -165,21 +195,63 @@ export default function CancelledRefundedOrdersScreen({
     [dateFilter, customStart, customEnd]
   )
 
+  // Helper to map void logs by ticketId or dailyNumber
+  const voidLogsByTicket = useMemo(() => {
+    const map = new Map()
+    voidLogs.forEach((log) => {
+      if (log.ticketId) {
+        const k = String(log.ticketId)
+        if (!map.has(k)) map.set(k, [])
+        map.get(k).push(log)
+      }
+      if (log.dailyNumber) {
+        const kDaily = `daily_${log.dailyNumber}`
+        if (!map.has(kDaily)) map.set(kDaily, [])
+        map.get(kDaily).push(log)
+      }
+    })
+    return map
+  }, [voidLogs])
+
+  const getTicketVoidLogs = useCallback(
+    (ticket) => {
+      if (!ticket) return []
+      const found = new Map()
+      if (ticket.id && voidLogsByTicket.has(String(ticket.id))) {
+        voidLogsByTicket.get(String(ticket.id)).forEach((l) => found.set(l.id, l))
+      }
+      if (ticket.ticketId && voidLogsByTicket.has(String(ticket.ticketId))) {
+        voidLogsByTicket.get(String(ticket.ticketId)).forEach((l) => found.set(l.id, l))
+      }
+      if (ticket.dailyNumber && voidLogsByTicket.has(`daily_${ticket.dailyNumber}`)) {
+        voidLogsByTicket.get(`daily_${ticket.dailyNumber}`).forEach((l) => found.set(l.id, l))
+      }
+      return Array.from(found.values()).sort((a, b) => {
+        const timeA = a.date ? a.date.getTime() : 0
+        const timeB = b.date ? b.date.getTime() : 0
+        return timeB - timeA
+      })
+    },
+    [voidLogsByTicket]
+  )
+
   // Merge and filter records
   const allCombinedRecords = useMemo(() => {
-    const list = [...openTickets, ...archivedOrders]
+    const list = [...openTickets, ...archivedOrders, ...voidLogs]
     return list.sort((a, b) => {
       const timeA = a.date ? a.date.getTime() : 0
       const timeB = b.date ? b.date.getTime() : 0
       return timeB - timeA
     })
-  }, [openTickets, archivedOrders])
+  }, [openTickets, archivedOrders, voidLogs])
 
   const filteredRecords = useMemo(() => {
     return allCombinedRecords.filter((record) => {
       // 1. Filter by Status/Type Tab
       if (filterType === 'voided') {
         if (record.status !== 'VOIDED' && record.status !== 'CANCELLED') return false
+      } else if (filterType === 'item_voids') {
+        if (!record.isVoidLog && record.status !== 'ITEM_VOID') return false
       } else if (filterType === 'refunded') {
         if (record.status !== 'REFUNDED') return false
       } else if (filterType === 'open') {
@@ -201,8 +273,18 @@ export default function CancelledRefundedOrdersScreen({
         const matchTable = String(record.tableNumber || '').toLowerCase().includes(q)
         const matchRoom = String(record.roomNumber || '').toLowerCase().includes(q)
         const matchSource = String(record.source || '').toLowerCase().includes(q)
+        const matchItem = String(record.itemName || '').toLowerCase().includes(q)
 
-        if (!matchId && !matchDaily && !matchNote && !matchReason && !matchTable && !matchRoom && !matchSource) {
+        if (
+          !matchId &&
+          !matchDaily &&
+          !matchNote &&
+          !matchReason &&
+          !matchTable &&
+          !matchRoom &&
+          !matchSource &&
+          !matchItem
+        ) {
           return false
         }
       }
@@ -266,6 +348,8 @@ export default function CancelledRefundedOrdersScreen({
   const stats = useMemo(() => {
     let voidedCount = 0
     let voidedAmount = 0
+    let itemVoidCount = 0
+    let itemVoidAmount = 0
     let refundedCount = 0
     let refundedAmount = 0
     let openCount = 0
@@ -275,7 +359,10 @@ export default function CancelledRefundedOrdersScreen({
       const matchesDate = r.status === 'OPEN' || isWithinDateFilter(r.date)
       if (!matchesDate) return
 
-      if (r.status === 'VOIDED' || r.status === 'CANCELLED') {
+      if (r.isVoidLog || r.status === 'ITEM_VOID') {
+        itemVoidCount += 1
+        itemVoidAmount += Number(r.totalAmount || r.total || 0)
+      } else if (r.status === 'VOIDED' || r.status === 'CANCELLED') {
         voidedCount += 1
         voidedAmount += Number(r.total || 0)
       } else if (r.status === 'REFUNDED') {
@@ -290,11 +377,14 @@ export default function CancelledRefundedOrdersScreen({
     return {
       voidedCount,
       voidedAmount,
+      itemVoidCount,
+      itemVoidAmount,
       refundedCount,
       refundedAmount,
       openCount,
       openAmount,
-      totalAuditRecords: voidedCount + refundedCount,
+      totalAuditRecords: voidedCount + itemVoidCount + refundedCount,
+      totalAuditLoss: voidedAmount + itemVoidAmount + refundedAmount,
     }
   }, [allCombinedRecords, isWithinDateFilter])
 
@@ -314,7 +404,20 @@ export default function CancelledRefundedOrdersScreen({
     ]
 
     const rows = filteredRecords.map((r) => {
-      const loc = r.tableNumber ? `Table ${r.tableNumber}` : r.roomNumber ? `Room ${r.roomNumber}` : r.source || 'Counter'
+      const loc = r.tableNumber
+        ? `Table ${r.tableNumber}`
+        : r.roomNumber
+        ? `Room ${r.roomNumber}`
+        : r.source || 'Counter'
+      const reasonText = r.isVoidLog
+        ? `${r.qtyVoided}x ${r.itemName} (${r.previousQty} -> ${r.remainingQty}): ${r.voidReason || r.note || ''}`
+        : r.voidReason || r.note || ''
+      const amountVal = r.isVoidLog
+        ? `-${(r.totalAmount || r.total || 0).toFixed(2)}`
+        : r.status === 'REFUNDED'
+        ? `-${(r.total || 0).toFixed(2)}`
+        : (r.total || 0).toFixed(2)
+
       return [
         `"${r.id}"`,
         `"${r.dailyNumber || ''}"`,
@@ -322,8 +425,8 @@ export default function CancelledRefundedOrdersScreen({
         `"${r.date ? r.date.toLocaleString() : r.createdAt || ''}"`,
         `"${r.source || ''}"`,
         `"${loc}"`,
-        `"${(r.voidReason || r.note || '').replace(/"/g, '""')}"`,
-        r.total?.toFixed(2) || '0.00',
+        `"${reasonText.replace(/"/g, '""')}"`,
+        amountVal,
       ].join(',')
     })
 
@@ -420,15 +523,28 @@ export default function CancelledRefundedOrdersScreen({
 
       {/* ── Top Section: Count Cards with '!' Info Button ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        {/* Card 1: Voided Orders */}
-        <div className="p-4 rounded-2xl bg-white border border-red-100 shadow-2xs hover:shadow-xs transition relative">
+        {/* Card 1: Voided Orders (Click to filter) */}
+        <div
+          onClick={() => setFilterType((prev) => (prev === 'voided' ? 'all' : 'voided'))}
+          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${
+            filterType === 'voided'
+              ? 'border-red-500 ring-2 ring-red-500/20 bg-red-50/25'
+              : 'border-red-100 hover:border-red-300'
+          }`}
+          title="Click to filter voided tickets"
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-              Cancelled / Voided
+            <span className={`text-xs font-bold uppercase tracking-wider transition ${
+              filterType === 'voided' ? 'text-red-700' : 'text-neutral-500'
+            }`}>
+              Voided Tickets
             </span>
             <button
               type="button"
-              onClick={() => toggleCardInfo('voided')}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleCardInfo('voided')
+              }}
               title="Click for info"
               className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
                 expandedInfoCard === 'voided'
@@ -441,7 +557,7 @@ export default function CancelledRefundedOrdersScreen({
           </div>
           <div className="mt-2.5 flex items-baseline gap-2">
             <span className="text-2xl font-extrabold text-red-600">{stats.voidedCount}</span>
-            <span className="text-xs text-neutral-400 font-medium">orders</span>
+            <span className="text-xs text-neutral-400 font-medium">tickets</span>
           </div>
           <div className="mt-2 flex items-center justify-between text-xs text-neutral-500 pt-2 border-t border-neutral-100">
             <span>Voided Total:</span>
@@ -452,21 +568,91 @@ export default function CancelledRefundedOrdersScreen({
 
           {/* Popover / Info Reveal */}
           {expandedInfoCard === 'voided' && (
-            <div className="mt-2 p-2.5 rounded-xl bg-red-50/90 border border-red-200 text-red-900 text-[11px] leading-relaxed animate-fadeIn">
-              <strong>Void / Cancel:</strong> Soft-deleted tickets before customer payment. Revenue is 0. All items and notes are preserved for managerial audit.
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="mt-2 p-2.5 rounded-xl bg-red-50/90 border border-red-200 text-red-900 text-[11px] leading-relaxed animate-fadeIn"
+            >
+              <strong>Voided Tickets:</strong> Complete tickets soft-deleted in SQLite/Firestore before payment. Revenue is 0. All items and audit reasons are preserved.
             </div>
           )}
         </div>
 
-        {/* Card 2: Refunded Orders */}
-        <div className="p-4 rounded-2xl bg-white border border-amber-100 shadow-2xs hover:shadow-xs transition relative">
+        {/* Card 2: Item Voids / Reductions (Click to filter) */}
+        <div
+          onClick={() => setFilterType((prev) => (prev === 'item_voids' ? 'all' : 'item_voids'))}
+          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${
+            filterType === 'item_voids'
+              ? 'border-purple-500 ring-2 ring-purple-500/20 bg-purple-50/25'
+              : 'border-purple-100 hover:border-purple-300'
+          }`}
+          title="Click to filter item voids"
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+            <span className={`text-xs font-bold uppercase tracking-wider transition ${
+              filterType === 'item_voids' ? 'text-purple-700' : 'text-neutral-500'
+            }`}>
+              Item Voids
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleCardInfo('item_voids')
+              }}
+              title="Click for info"
+              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
+                expandedInfoCard === 'item_voids'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-purple-50 text-purple-600 hover:bg-purple-100'
+              }`}
+            >
+              !
+            </button>
+          </div>
+          <div className="mt-2.5 flex items-baseline gap-2">
+            <span className="text-2xl font-extrabold text-purple-600">{stats.itemVoidCount}</span>
+            <span className="text-xs text-neutral-400 font-medium">items</span>
+          </div>
+          <div className="mt-2 flex items-center justify-between text-xs text-neutral-500 pt-2 border-t border-neutral-100">
+            <span>Lost Value:</span>
+            <span className="font-bold text-purple-700">
+              -{currencySymbol}{stats.itemVoidAmount.toFixed(2)}
+            </span>
+          </div>
+
+          {/* Popover / Info Reveal */}
+          {expandedInfoCard === 'item_voids' && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="mt-2 p-2.5 rounded-xl bg-purple-50/90 border border-purple-200 text-purple-900 text-[11px] leading-relaxed animate-fadeIn"
+            >
+              <strong>Item Voids:</strong> Individual items deleted or reduced from saved tickets. Tracks previous qty, remaining qty, unit price, and manager void reason.
+            </div>
+          )}
+        </div>
+
+        {/* Card 3: Refunded Orders (Click to filter) */}
+        <div
+          onClick={() => setFilterType((prev) => (prev === 'refunded' ? 'all' : 'refunded'))}
+          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${
+            filterType === 'refunded'
+              ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-50/25'
+              : 'border-amber-100 hover:border-amber-300'
+          }`}
+          title="Click to filter refunded orders"
+        >
+          <div className="flex items-center justify-between">
+            <span className={`text-xs font-bold uppercase tracking-wider transition ${
+              filterType === 'refunded' ? 'text-amber-700' : 'text-neutral-500'
+            }`}>
               Refunded Orders
             </span>
             <button
               type="button"
-              onClick={() => toggleCardInfo('refunded')}
+              onClick={(e) => {
+                e.stopPropagation()
+                toggleCardInfo('refunded')
+              }}
               title="Click for info"
               className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
                 expandedInfoCard === 'refunded'
@@ -490,27 +676,25 @@ export default function CancelledRefundedOrdersScreen({
 
           {/* Popover / Info Reveal */}
           {expandedInfoCard === 'refunded' && (
-            <div className="mt-2 p-2.5 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 text-[11px] leading-relaxed animate-fadeIn">
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="mt-2 p-2.5 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 text-[11px] leading-relaxed animate-fadeIn"
+            >
               <strong>Refund:</strong> Issued after a customer has paid. Returned funds reduce daily sales and net revenue.
             </div>
           )}
         </div>
 
-        {/* Card 3: Open Tickets (Tap to view Tables Grid) */}
+        {/* Card 4: Open Tickets (Tap to view Tables Grid) */}
         <div
           onClick={() => setShowTablesModal(true)}
           className="p-4 rounded-2xl bg-white border border-blue-100 shadow-2xs hover:shadow-md hover:border-blue-300 transition relative cursor-pointer group"
           title="Click to view Tables Grid"
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 group-hover:text-blue-600 transition">
-                Open Tickets
-              </span>
-              <span className="text-[10px] text-blue-600 font-bold px-1.5 py-0.5 rounded-full bg-blue-50 border border-blue-200/70 group-hover:bg-blue-600 group-hover:text-white transition">
-                Tables Grid ↗
-              </span>
-            </div>
+            <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 group-hover:text-blue-600 transition">
+              Open Tickets
+            </span>
             <button
               type="button"
               onClick={(e) => {
@@ -549,47 +733,7 @@ export default function CancelledRefundedOrdersScreen({
               onClick={(e) => e.stopPropagation()}
               className="mt-2 p-2.5 rounded-xl bg-blue-50/90 border border-blue-200 text-blue-900 text-[11px] leading-relaxed animate-fadeIn"
             >
-              <strong>Open Tickets:</strong> Currently ongoing tickets synced from tables & rooms. Tap card to view live tables grid and see red occupied tables.
-            </div>
-          )}
-        </div>
-
-        {/* Card 4: Total Flagged */}
-        <div className="p-4 rounded-2xl bg-white border border-neutral-200/80 shadow-2xs hover:shadow-xs transition relative">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-              Total Audited
-            </span>
-            <button
-              type="button"
-              onClick={() => toggleCardInfo('audit')}
-              title="Click for info"
-              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
-                expandedInfoCard === 'audit'
-                  ? 'bg-neutral-800 text-white'
-                  : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-              }`}
-            >
-              !
-            </button>
-          </div>
-          <div className="mt-2.5 flex items-baseline gap-2">
-            <span className="text-2xl font-extrabold text-neutral-900">
-              {stats.totalAuditRecords}
-            </span>
-            <span className="text-xs text-neutral-400 font-medium">flagged</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between text-xs text-neutral-500 pt-2 border-t border-neutral-100">
-            <span>Combined Total:</span>
-            <span className="font-bold text-neutral-800">
-              {currencySymbol}{(stats.voidedAmount + stats.refundedAmount).toFixed(2)}
-            </span>
-          </div>
-
-          {/* Popover / Info Reveal */}
-          {expandedInfoCard === 'audit' && (
-            <div className="mt-2 p-2.5 rounded-xl bg-neutral-100 border border-neutral-200 text-neutral-800 text-[11px] leading-relaxed animate-fadeIn">
-              <strong>Audit Total:</strong> Combined count of all voided and refunded transactions requiring manager verification.
+              <strong>Open Tickets:</strong> Currently ongoing tickets synced from tables & rooms. Tap card to view live tables grid and see occupied tables.
             </div>
           )}
         </div>
@@ -620,8 +764,28 @@ export default function CancelledRefundedOrdersScreen({
                   : 'text-neutral-600 hover:text-neutral-900'
               }`}
             >
-              <IconVoid />
-              <span>Voided ({stats.voidedCount})</span>
+              <span>Voided Tickets</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                filterType === 'voided' ? 'bg-red-700 text-white' : 'bg-neutral-200 text-neutral-700'
+              }`}>
+                {stats.voidedCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterType('item_voids')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                filterType === 'item_voids'
+                  ? 'bg-purple-600 text-white shadow-xs'
+                  : 'text-neutral-600 hover:text-neutral-900'
+              }`}
+            >
+              <span>Item Voids</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                filterType === 'item_voids' ? 'bg-purple-700 text-white' : 'bg-neutral-200 text-neutral-700'
+              }`}>
+                {stats.itemVoidCount}
+              </span>
             </button>
             <button
               type="button"
@@ -632,8 +796,12 @@ export default function CancelledRefundedOrdersScreen({
                   : 'text-neutral-600 hover:text-neutral-900'
               }`}
             >
-              <IconRefund />
-              <span>Refunded ({stats.refundedCount})</span>
+              <span>Refunded</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                filterType === 'refunded' ? 'bg-amber-700 text-white' : 'bg-neutral-200 text-neutral-700'
+              }`}>
+                {stats.refundedCount}
+              </span>
             </button>
             <button
               type="button"
@@ -644,8 +812,12 @@ export default function CancelledRefundedOrdersScreen({
                   : 'text-neutral-600 hover:text-neutral-900'
               }`}
             >
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>Open ({openTickets.length})</span>
+              <span>Open Tickets</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                filterType === 'open' ? 'bg-blue-700 text-white' : 'bg-neutral-200 text-neutral-700'
+              }`}>
+                {stats.openCount}
+              </span>
             </button>
           </div>
 
@@ -752,6 +924,7 @@ export default function CancelledRefundedOrdersScreen({
                 </thead>
                 <tbody className="divide-y divide-neutral-100 text-xs">
                   {paginatedRecords.map((record) => {
+                    const isVoidLog = record.isVoidLog || record.status === 'ITEM_VOID'
                     const isVoided = record.status === 'VOIDED' || record.status === 'CANCELLED'
                     const isRefunded = record.status === 'REFUNDED'
                     const isOpen = record.status === 'OPEN'
@@ -765,13 +938,21 @@ export default function CancelledRefundedOrdersScreen({
                         {/* Ticket # */}
                         <td className="py-3.5 px-4 font-mono font-bold text-neutral-900">
                           <span>{record.displayId || `#${record.id.slice(0, 8)}`}</span>
-                          <span className="text-[10px] text-neutral-400 font-sans font-normal block">
-                            {getRelativeTime(record.date)}
+                          <span className={`text-[10px] font-sans block ${
+                            isVoidLog ? 'text-purple-600 font-semibold' : 'text-neutral-400 font-normal'
+                          }`}>
+                            {isVoidLog ? 'Item Reduction' : getRelativeTime(record.date)}
                           </span>
                         </td>
 
                         {/* Status */}
                         <td className="py-3.5 px-4">
+                          {isVoidLog && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-700 border border-purple-200">
+                              <IconAlertTriangle />
+                              <span>ITEM VOID</span>
+                            </span>
+                          )}
                           {isVoided && (
                             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-700 border border-red-200">
                               <IconVoid />
@@ -809,9 +990,22 @@ export default function CancelledRefundedOrdersScreen({
                           </div>
                         </td>
 
-                        {/* Reason / Note */}
+                        {/* Reason / Note / Item info */}
                         <td className="py-3.5 px-4 max-w-xs">
-                          {record.voidReason ? (
+                          {isVoidLog ? (
+                            <div>
+                              <div className="font-bold text-neutral-900 text-xs flex items-center gap-1 flex-wrap">
+                                <span className="text-purple-700 font-extrabold">{record.qtyVoided}x</span>
+                                <span className="text-neutral-900">{record.itemName}</span>
+                                <span className="text-[10px] text-neutral-500 font-normal bg-neutral-100 px-1.5 py-0.5 rounded">
+                                  {record.previousQty} → {record.remainingQty}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-neutral-500 truncate mt-0.5">
+                                Reason: <span className="text-neutral-700 font-medium">{record.voidReason || 'Item reduced in cart'}</span>
+                              </div>
+                            </div>
+                          ) : record.voidReason ? (
                             <div className="inline-block bg-red-50 text-red-700 px-2.5 py-0.5 rounded-md text-[11px] font-medium truncate max-w-full">
                               {record.voidReason}
                             </div>
@@ -826,6 +1020,17 @@ export default function CancelledRefundedOrdersScreen({
 
                         {/* Amount */}
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                          {isVoidLog && (
+                            <div>
+                              <span className="font-bold font-mono text-purple-700 text-sm">
+                                -{currencySymbol}
+                                {(record.totalAmount || record.total || 0).toFixed(2)}
+                              </span>
+                              <div className="text-[10px] text-neutral-400 font-mono">
+                                {record.qtyVoided} × {currencySymbol}{Number(record.unitPrice || 0).toFixed(2)}
+                              </div>
+                            </div>
+                          )}
                           {isVoided && (
                             <div>
                               <span className="line-through text-neutral-400 font-mono text-xs">
@@ -1139,7 +1344,9 @@ export default function CancelledRefundedOrdersScreen({
               <div className="flex items-center gap-2.5">
                 <div
                   className={`p-2 rounded-xl text-white ${
-                    selectedRecord.status === 'VOIDED'
+                    selectedRecord.isVoidLog || selectedRecord.status === 'ITEM_VOID'
+                      ? 'bg-purple-600'
+                      : selectedRecord.status === 'VOIDED'
                       ? 'bg-red-600'
                       : selectedRecord.status === 'REFUNDED'
                       ? 'bg-amber-600'
@@ -1152,6 +1359,8 @@ export default function CancelledRefundedOrdersScreen({
                   <h3 className="font-bold text-sm text-neutral-900">
                     {selectedRecord.isTableGroup
                       ? `Table #${selectedRecord.tableNumber}`
+                      : selectedRecord.isVoidLog || selectedRecord.status === 'ITEM_VOID'
+                      ? `Item Void — Ticket ${selectedRecord.displayId}`
                       : `Order ${selectedRecord.displayId}`}
                   </h3>
                   <p className="text-[11px] text-neutral-500">
@@ -1216,68 +1425,110 @@ export default function CancelledRefundedOrdersScreen({
                     !selectedRecord.tickets.some((t) => t.id === activeTicketTab)
                       ? selectedRecord.tickets
                       : selectedRecord.tickets.filter((t) => t.id === activeTicketTab)
-                  ).map((ticket, tIdx) => (
-                    <div
-                      key={ticket.id || tIdx}
-                      className="p-3.5 bg-neutral-50/80 rounded-2xl border border-neutral-200/80 space-y-3"
-                    >
-                      {/* Ticket header */}
-                      <div className="flex items-center justify-between pb-2 border-b border-neutral-200/60">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-neutral-900 text-white font-mono">
-                            {ticket.displayId}
-                          </span>
-                          <span className="text-[11px] text-neutral-500">
-                            {formatDate(ticket.date)} at {formatTime(ticket.date)}
+                  ).map((ticket, tIdx) => {
+                    const ticketVoidLogs = getTicketVoidLogs(ticket)
+                    return (
+                      <div
+                        key={ticket.id || tIdx}
+                        className="p-3.5 bg-neutral-50/80 rounded-2xl border border-neutral-200/80 space-y-3"
+                      >
+                        {/* Ticket header */}
+                        <div className="flex items-center justify-between pb-2 border-b border-neutral-200/60">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-neutral-900 text-white font-mono">
+                              {ticket.displayId}
+                            </span>
+                            <span className="text-[11px] text-neutral-500">
+                              {formatDate(ticket.date)} at {formatTime(ticket.date)}
+                            </span>
+                          </div>
+                          <span className="font-mono font-extrabold text-neutral-900 text-sm">
+                            {currencySymbol}{Number(ticket.total || 0).toFixed(2)}
                           </span>
                         </div>
-                        <span className="font-mono font-extrabold text-neutral-900 text-sm">
-                          {currencySymbol}{Number(ticket.total || 0).toFixed(2)}
-                        </span>
-                      </div>
 
-                      {/* Note / Reason if any */}
-                      {(ticket.voidReason || ticket.note) && (
-                        <div className="p-2.5 bg-red-50/80 border border-red-200 rounded-xl">
-                          <span className="text-[10px] text-red-600 font-bold uppercase block mb-0.5">
-                            Audit Note / Reason
-                          </span>
-                          <p className="font-medium text-red-900 text-xs">
-                            {ticket.voidReason || ticket.note}
-                          </p>
-                        </div>
-                      )}
+                        {/* Note / Reason if any */}
+                        {(ticket.voidReason || ticket.note) && (
+                          <div className="p-2.5 bg-red-50/80 border border-red-200 rounded-xl">
+                            <span className="text-[10px] text-red-600 font-bold uppercase block mb-0.5">
+                              Audit Note / Reason
+                            </span>
+                            <p className="font-medium text-red-900 text-xs">
+                              {ticket.voidReason || ticket.note}
+                            </p>
+                          </div>
+                        )}
 
-                      {/* Items */}
-                      {ticket.items && ticket.items.length > 0 ? (
-                        <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 overflow-hidden bg-white">
-                          {ticket.items.map((item, idx) => (
-                            <div
-                              key={idx}
-                              className="p-2.5 flex justify-between items-center text-xs"
-                            >
-                              <div>
-                                <span className="font-bold text-neutral-800">
-                                  {item.qty || item.quantity || 1}x{' '}
+                        {/* Active Items */}
+                        {ticket.items && ticket.items.length > 0 ? (
+                          <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 overflow-hidden bg-white">
+                            {ticket.items.map((item, idx) => (
+                              <div
+                                key={idx}
+                                className="p-2.5 flex justify-between items-center text-xs"
+                              >
+                                <div>
+                                  <span className="font-bold text-neutral-800">
+                                    {item.qty || item.quantity || 1}x{' '}
+                                  </span>
+                                  <span className="text-neutral-900">{item.name || 'Item'}</span>
+                                </div>
+                                <span className="font-mono font-semibold text-neutral-700">
+                                  {currencySymbol}
+                                  {(
+                                    (item.price || 0) * (item.qty || item.quantity || 1)
+                                  ).toFixed(2)}
                                 </span>
-                                <span className="text-neutral-900">{item.name || 'Item'}</span>
                               </div>
-                              <span className="font-mono font-semibold text-neutral-700">
-                                {currencySymbol}
-                                {(
-                                  (item.price || 0) * (item.qty || item.quantity || 1)
-                                ).toFixed(2)}
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-neutral-400 italic">
+                            No item details recorded
+                          </p>
+                        )}
+
+                        {/* VOIDED / REMOVED ITEMS FOR THIS TICKET (IF ANY) */}
+                        {ticketVoidLogs.length > 0 && (
+                          <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1">
+                                <IconAlertTriangle />
+                                Voided / Removed Items ({ticketVoidLogs.length})
+                              </span>
+                              <span className="text-[10px] font-mono font-bold text-purple-700">
+                                -{currencySymbol}
+                                {ticketVoidLogs
+                                  .reduce((sum, l) => sum + Number(l.totalAmount || 0), 0)
+                                  .toFixed(2)}
                               </span>
                             </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-[11px] text-neutral-400 italic">
-                          No item details recorded
-                        </p>
-                      )}
-                    </div>
-                  ))}
+                            <div className="divide-y divide-purple-100 bg-white rounded-lg border border-purple-200/70 overflow-hidden">
+                              {ticketVoidLogs.map((log) => (
+                                <div key={log.id} className="p-2 text-xs flex justify-between items-start gap-2">
+                                  <div>
+                                    <div className="font-bold text-neutral-900 text-[11px]">
+                                      <span className="text-purple-700 font-extrabold">{log.qtyVoided}x </span>
+                                      {log.itemName}
+                                      <span className="text-[10px] text-neutral-400 ml-1.5 font-normal">
+                                        ({log.previousQty} → {log.remainingQty})
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-purple-700 mt-0.5">
+                                      Reason: {log.voidReason}
+                                    </p>
+                                  </div>
+                                  <span className="font-mono font-semibold text-purple-700 text-xs whitespace-nowrap">
+                                    -{currencySymbol}{Number(log.totalAmount || 0).toFixed(2)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
 
                   {/* Combined Total Summary */}
                   <div className="flex justify-between items-baseline pt-3 border-t border-neutral-200">
@@ -1302,8 +1553,83 @@ export default function CancelledRefundedOrdersScreen({
                     </span>
                   </div>
                 </div>
+              ) : selectedRecord.isVoidLog || selectedRecord.status === 'ITEM_VOID' ? (
+                // ── DEDICATED ITEM VOID AUDIT MODAL ──
+                <div className="space-y-4">
+                  {/* Meta Info */}
+                  <div className="grid grid-cols-2 gap-2.5 p-3 bg-purple-50/70 rounded-xl border border-purple-200 text-[11px]">
+                    <div>
+                      <span className="text-purple-400 block">Location</span>
+                      <span className="font-bold text-purple-900">
+                        {selectedRecord.tableNumber
+                          ? `Table #${selectedRecord.tableNumber}`
+                          : selectedRecord.roomNumber
+                          ? `Room #${selectedRecord.roomNumber}`
+                          : selectedRecord.source || 'Counter'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-purple-400 block">Action</span>
+                      <span className="font-bold text-purple-900">ITEM REDUCTION</span>
+                    </div>
+                    {selectedRecord.ticketId && (
+                      <div className="col-span-2 pt-1.5 border-t border-purple-100 flex items-center justify-between text-[10px] text-purple-600 font-mono">
+                        <span>Ticket ID: {selectedRecord.ticketId}</span>
+                        {selectedRecord.dailyNumber && <span>Sequence: #{selectedRecord.dailyNumber}</span>}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Item Details Box */}
+                  <div className="p-3.5 bg-white rounded-2xl border border-purple-200 shadow-2xs space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <span className="text-[10px] font-bold text-purple-600 uppercase tracking-wider block">
+                          Voided Item
+                        </span>
+                        <h4 className="font-extrabold text-base text-neutral-900 mt-0.5">
+                          {selectedRecord.qtyVoided}x {selectedRecord.itemName}
+                        </h4>
+                      </div>
+                      <span className="font-mono font-extrabold text-lg text-purple-700">
+                        -{currencySymbol}{Number(selectedRecord.totalAmount || selectedRecord.total || 0).toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="p-2.5 bg-neutral-50 rounded-xl space-y-1.5 text-xs text-neutral-700">
+                      <div className="flex justify-between">
+                        <span className="text-neutral-500">Quantity Reduction:</span>
+                        <span className="font-bold">
+                          {selectedRecord.previousQty} (Original) → {selectedRecord.remainingQty} (Remaining)
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-neutral-500">Unit Price:</span>
+                        <span className="font-mono font-semibold">
+                          {currencySymbol}{Number(selectedRecord.unitPrice || 0).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-t border-neutral-200 pt-1.5">
+                        <span className="font-bold text-neutral-900">Lost Total:</span>
+                        <span className="font-mono font-bold text-purple-700">
+                          {selectedRecord.qtyVoided} × {currencySymbol}{Number(selectedRecord.unitPrice || 0).toFixed(2)} = {currencySymbol}{Number(selectedRecord.totalAmount || 0).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Void Reason */}
+                  <div className="p-3 bg-red-50/80 border border-red-200 rounded-xl">
+                    <span className="text-[10px] text-red-600 font-bold uppercase block mb-1">
+                      Manager / Cashier Void Reason
+                    </span>
+                    <p className="font-semibold text-red-900 text-xs">
+                      {selectedRecord.voidReason || selectedRecord.note || 'Item reduced in cart'}
+                    </p>
+                  </div>
+                </div>
               ) : (
-                // ── SINGLE RECORD VIEW ──
+                // ── STANDARD ORDER / TICKET VIEW ──
                 <>
                   {/* Meta info */}
                   <div className="grid grid-cols-2 gap-2.5 p-3 bg-neutral-50 rounded-xl border border-neutral-100 text-[11px]">
@@ -1335,7 +1661,7 @@ export default function CancelledRefundedOrdersScreen({
                     </div>
                   )}
 
-                  {/* Items List inside modal only */}
+                  {/* Items List */}
                   {selectedRecord.items && selectedRecord.items.length > 0 && (
                     <div className="space-y-1.5">
                       <span className="font-bold text-neutral-700 text-xs block">Order Items</span>
@@ -1362,6 +1688,52 @@ export default function CancelledRefundedOrdersScreen({
                       </div>
                     </div>
                   )}
+
+                  {/* VOIDED / REMOVED ITEMS SECTION (IF ANY FOR THIS TICKET) */}
+                  {(() => {
+                    const ticketVoidLogs = getTicketVoidLogs(selectedRecord)
+                    if (ticketVoidLogs.length === 0) return null
+                    return (
+                      <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1.5">
+                            <IconAlertTriangle />
+                            Voided / Removed Items ({ticketVoidLogs.length})
+                          </span>
+                          <span className="text-[11px] font-mono font-bold text-purple-700">
+                            Lost: -{currencySymbol}
+                            {ticketVoidLogs
+                              .reduce((sum, l) => sum + Number(l.totalAmount || 0), 0)
+                              .toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="divide-y divide-purple-100 bg-white rounded-lg border border-purple-200/70 overflow-hidden">
+                          {ticketVoidLogs.map((log) => (
+                            <div key={log.id} className="p-2.5 text-xs flex justify-between items-start gap-2">
+                              <div>
+                                <div className="font-bold text-neutral-900">
+                                  <span className="text-purple-700 font-extrabold">{log.qtyVoided}x </span>
+                                  {log.itemName}
+                                  <span className="text-[10px] text-neutral-400 ml-1.5 font-normal">
+                                    ({log.previousQty} → {log.remainingQty})
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-purple-700 mt-0.5">
+                                  Reason: {log.voidReason}
+                                </p>
+                                <span className="text-[10px] text-neutral-400">
+                                  {formatTime(log.date)}
+                                </span>
+                              </div>
+                              <span className="font-mono font-semibold text-purple-700 whitespace-nowrap">
+                                -{currencySymbol}{Number(log.totalAmount || 0).toFixed(2)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
 
                   {/* Total */}
                   <div className="flex justify-between items-baseline pt-3 border-t border-neutral-200">

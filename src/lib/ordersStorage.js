@@ -363,3 +363,231 @@ export const subscribeToTodayAuditOrders = (restaurantId, onUpdate, onError, bac
     }
   )
 }
+
+/**
+ * Normalizes a void log document into a standard audit record structure.
+ * Corresponds to POS void_logs collection: backup/{restaurantId}/void_logs/{logId}
+ */
+export const normalizeVoidLog = (docData, fallbackId = '') => {
+  if (!docData || typeof docData !== 'object') return null
+
+  const id =
+    docData.id ??
+    docData.logId ??
+    fallbackId ??
+    `void_log_${Math.random().toString(36).slice(2, 8)}`
+
+  const rawDate = normalizeOrderDate(
+    docData.voidedAt || docData.createdAt || docData.timestamp || docData.date
+  )
+
+  const qtyVoided = Number(docData.qtyVoided ?? docData.quantityVoided ?? docData.qty ?? 1) || 1
+  const unitPrice = Number(docData.unitPrice ?? docData.price ?? 0) || 0
+  let totalAmount = Number(docData.totalAmount ?? docData.amount ?? qtyVoided * unitPrice)
+  if (isNaN(totalAmount) || totalAmount === 0) {
+    totalAmount = qtyVoided * unitPrice
+  }
+
+  const dailyNumber = docData.dailyNumber != null ? String(docData.dailyNumber) : null
+  const ticketId = docData.ticketId != null ? String(docData.ticketId) : null
+
+  return {
+    ...docData,
+    id: String(id),
+    ticketId,
+    ticketItemId: docData.ticketItemId ? String(docData.ticketItemId) : null,
+    dailyNumber,
+    displayId: dailyNumber
+      ? `#${dailyNumber}`
+      : ticketId
+      ? `#${ticketId.slice(0, 8)}`
+      : `#${String(id).slice(0, 8)}`,
+    tableNumber: docData.tableNumber != null ? String(docData.tableNumber) : null,
+    roomNumber: docData.roomNumber != null ? String(docData.roomNumber) : null,
+    itemName: docData.itemName || docData.name || 'Item',
+    itemId: docData.itemId ? String(docData.itemId) : null,
+    previousQty: Number(docData.previousQty ?? docData.prevQty ?? 0),
+    remainingQty: Number(docData.remainingQty ?? docData.remQty ?? 0),
+    qtyVoided,
+    unitPrice,
+    totalAmount,
+    total: totalAmount, // for compatibility with total-based views
+    voidReason: docData.voidReason || docData.reason || docData.note || 'Item reduced in cart',
+    note: docData.note || docData.voidReason || 'Item reduced in cart',
+    voidedAt: rawDate,
+    date: rawDate,
+    createdAt: docData.createdAt || (rawDate ? rawDate.toISOString() : null),
+    status: 'ITEM_VOID',
+    source: docData.source || 'POS',
+    isVoidLog: true,
+  }
+}
+
+/**
+ * Fetches Void Logs from Firestore.
+ * Paths checked:
+ * - backup/{restaurantId}/void_logs
+ * - restaurants/{restaurantId}/void_logs
+ * - backups/{restaurantId}/void_logs
+ */
+export const fetchVoidLogs = async (
+  restaurantId,
+  { startDate = null, endDate = null, limitCount = 2000, backupConfig = null } = {}
+) => {
+  if (!restaurantId) return []
+  const firestoreDb = getActiveFirestoreInstance(backupConfig)
+  if (!firestoreDb) return []
+
+  const logsMap = new Map()
+
+  const addLog = (raw, fallbackId) => {
+    const norm = normalizeVoidLog(raw, fallbackId)
+    if (!norm) return
+    if (!logsMap.has(norm.id)) {
+      logsMap.set(norm.id, norm)
+    }
+  }
+
+  const parseDoc = (data, docId) => {
+    if (!data) return
+    if (Array.isArray(data.void_logs)) {
+      data.void_logs.forEach((l, i) => addLog(l, `${docId}_vl_${i}`))
+    } else if (Array.isArray(data.voidLogs)) {
+      data.voidLogs.forEach((l, i) => addLog(l, `${docId}_vl_${i}`))
+    } else {
+      addLog(data, docId)
+    }
+  }
+
+  const startLocalStr = startDate ? toLocalISOString(startDate) : null
+  const endLocalStr = endDate ? toLocalISOString(endDate) : null
+
+  // 1. Check parent doc if void_logs array stored there
+  if (!startDate || !endDate) {
+    try {
+      const parentRef = doc(firestoreDb, 'backup', restaurantId)
+      const parentSnap = await getDoc(parentRef)
+      if (parentSnap.exists()) {
+        parseDoc(parentSnap.data(), parentSnap.id)
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  // 2. Subcollections
+  const candidateCollections = [
+    collection(firestoreDb, 'backup', restaurantId, 'void_logs'),
+    collection(firestoreDb, 'restaurants', restaurantId, 'void_logs'),
+    collection(firestoreDb, 'backups', restaurantId, 'void_logs'),
+  ]
+
+  for (const colRef of candidateCollections) {
+    try {
+      let fetched = false
+
+      if (startLocalStr && endLocalStr) {
+        try {
+          const qStr = query(
+            colRef,
+            where('voidedAt', '>=', startLocalStr),
+            where('voidedAt', '<=', endLocalStr),
+            limit(limitCount)
+          )
+          const snapStr = await getDocs(qStr)
+          if (!snapStr.empty) {
+            snapStr.forEach((docSnap) => parseDoc(docSnap.data(), docSnap.id))
+            fetched = true
+          }
+        } catch {
+          // Fallback
+        }
+
+        if (!fetched) {
+          try {
+            const qCreated = query(
+              colRef,
+              where('createdAt', '>=', startLocalStr),
+              where('createdAt', '<=', endLocalStr),
+              limit(limitCount)
+            )
+            const snapCreated = await getDocs(qCreated)
+            if (!snapCreated.empty) {
+              snapCreated.forEach((docSnap) => parseDoc(docSnap.data(), docSnap.id))
+              fetched = true
+            }
+          } catch {
+            // Ignore
+          }
+        }
+      }
+
+      if (!fetched) {
+        let q
+        try {
+          q = query(colRef, limit(limitCount))
+        } catch {
+          q = colRef
+        }
+        const snap = await getDocs(q)
+        if (!snap.empty) {
+          snap.forEach((docSnap) => parseDoc(docSnap.data(), docSnap.id))
+        }
+      }
+    } catch {
+      // Continue next collection
+    }
+  }
+
+  let list = Array.from(logsMap.values())
+
+  if (startDate || endDate) {
+    list = list.filter((r) => {
+      if (!r.date) return true
+      if (startDate && r.date < startDate) return false
+      if (endDate && r.date > endDate) return false
+      return true
+    })
+  }
+
+  return list.sort((a, b) => {
+    const timeA = a.date ? a.date.getTime() : 0
+    const timeB = b.date ? b.date.getTime() : 0
+    return timeB - timeA
+  })
+}
+
+/**
+ * Real-time listener for today's void logs.
+ */
+export const subscribeToTodayVoidLogs = (restaurantId, onUpdate, onError, backupConfig = null) => {
+  if (!restaurantId) return () => {}
+  const firestoreDb = getActiveFirestoreInstance(backupConfig)
+  if (!firestoreDb) return () => {}
+
+  const colRef = collection(firestoreDb, 'backup', restaurantId, 'void_logs')
+
+  let q
+  try {
+    q = query(colRef, limit(200))
+  } catch {
+    q = colRef
+  }
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const logs = []
+      snapshot.forEach((docSnap) => {
+        const norm = normalizeVoidLog(docSnap.data(), docSnap.id)
+        if (norm) logs.push(norm)
+      })
+      onUpdate(logs)
+    },
+    (err) => {
+      if (typeof onError === 'function') onError(err)
+      else console.warn('Void logs live listener note:', err)
+    }
+  )
+}
+
