@@ -273,6 +273,7 @@ export default function CancelledRefundedOrdersScreen({
         const matchTable = String(record.tableNumber || '').toLowerCase().includes(q)
         const matchRoom = String(record.roomNumber || '').toLowerCase().includes(q)
         const matchSource = String(record.source || '').toLowerCase().includes(q)
+        const matchType = String(record.orderType || '').toLowerCase().includes(q)
         const matchItem = String(record.itemName || '').toLowerCase().includes(q)
 
         if (
@@ -283,6 +284,7 @@ export default function CancelledRefundedOrdersScreen({
           !matchTable &&
           !matchRoom &&
           !matchSource &&
+          !matchType &&
           !matchItem
         ) {
           return false
@@ -404,11 +406,7 @@ export default function CancelledRefundedOrdersScreen({
     ]
 
     const rows = filteredRecords.map((r) => {
-      const loc = r.tableNumber
-        ? `Table ${r.tableNumber}`
-        : r.roomNumber
-        ? `Room ${r.roomNumber}`
-        : r.source || 'Counter'
+      const loc = getOrderLocationText(r)
       const reasonText = r.isVoidLog
         ? `${r.qtyVoided}x ${r.itemName} (${r.previousQty} -> ${r.remainingQty}): ${r.voidReason || r.note || ''}`
         : r.voidReason || r.note || ''
@@ -461,6 +459,34 @@ export default function CancelledRefundedOrdersScreen({
     if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
     if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
     return `${Math.floor(diffSec / 86400)}d ago`
+  }
+
+  const getOrderLocationText = (r) => {
+    if (!r) return 'Counter'
+    if (r.tableNumber) return `Table #${r.tableNumber}`
+    if (r.roomNumber) return `Room #${r.roomNumber}`
+    const ordType = String(r.orderType || '').toUpperCase().trim()
+    const src = String(r.source || '').toUpperCase().trim()
+    if (
+      ordType === 'UBER' ||
+      src === 'UBER' ||
+      ordType === 'UBEREATS' ||
+      src === 'UBEREATS' ||
+      ordType === 'UBER_EATS' ||
+      src === 'UBER_EATS'
+    ) {
+      return 'Uber Eats'
+    }
+    if (
+      ordType === 'PICKME' ||
+      src === 'PICKME' ||
+      ordType === 'PICK_ME' ||
+      src === 'PICK_ME' ||
+      ordType === 'PICKMEFOOD'
+    ) {
+      return 'PickMe Food'
+    }
+    return r.source || 'Counter'
   }
 
   return (
@@ -982,11 +1008,7 @@ export default function CancelledRefundedOrdersScreen({
                         {/* Location */}
                         <td className="py-3.5 px-4 text-neutral-700">
                           <div className="font-semibold text-neutral-900">
-                            {record.tableNumber
-                              ? `Table #${record.tableNumber}`
-                              : record.roomNumber
-                              ? `Room #${record.roomNumber}`
-                              : record.source || 'Counter'}
+                            {getOrderLocationText(record)}
                           </div>
                         </td>
 
@@ -1300,7 +1322,7 @@ export default function CancelledRefundedOrdersScreen({
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-sm text-red-950 truncate">
-                            {ticket.roomNumber ? `Room ${ticket.roomNumber}` : ticket.source || 'Counter'}
+                            {getOrderLocationText(ticket)}
                           </span>
                           <span className="h-2 w-2 rounded-full bg-red-600 animate-pulse"></span>
                         </div>
@@ -1561,11 +1583,7 @@ export default function CancelledRefundedOrdersScreen({
                     <div>
                       <span className="text-purple-400 block">Location</span>
                       <span className="font-bold text-purple-900">
-                        {selectedRecord.tableNumber
-                          ? `Table #${selectedRecord.tableNumber}`
-                          : selectedRecord.roomNumber
-                          ? `Room #${selectedRecord.roomNumber}`
-                          : selectedRecord.source || 'Counter'}
+                        {getOrderLocationText(selectedRecord)}
                       </span>
                     </div>
                     <div>
@@ -1636,11 +1654,7 @@ export default function CancelledRefundedOrdersScreen({
                     <div>
                       <span className="text-neutral-400 block">Location</span>
                       <span className="font-bold text-neutral-800">
-                        {selectedRecord.tableNumber
-                          ? `Table #${selectedRecord.tableNumber}`
-                          : selectedRecord.roomNumber
-                          ? `Room #${selectedRecord.roomNumber}`
-                          : selectedRecord.source || 'Counter'}
+                        {getOrderLocationText(selectedRecord)}
                       </span>
                     </div>
                     <div>

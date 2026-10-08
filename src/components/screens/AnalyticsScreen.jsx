@@ -14,9 +14,34 @@ import {
 
 export const getOrderChannelInfo = (order) => {
   if (!order) return { key: 'COUNTER', label: 'Counter / Walk-in', icon: '', badgeColor: 'bg-neutral-100 text-neutral-800 border-neutral-200' }
-  const src = (order.source || '').toUpperCase()
-  const ordType = (order.orderType || '').toUpperCase()
+  const src = String(order.source || '').toUpperCase().trim()
+  const ordType = String(order.orderType || '').toUpperCase().trim()
+  const payMethod = String(order.paymentMethod || '').toUpperCase().trim()
 
+  if (
+    ordType === 'UBER' ||
+    ordType === 'UBEREATS' ||
+    ordType === 'UBER_EATS' ||
+    src === 'UBER' ||
+    src === 'UBEREATS' ||
+    src === 'UBER_EATS' ||
+    payMethod === 'UBER' ||
+    payMethod === 'UBEREATS'
+  ) {
+    return { key: 'UBER', label: 'Uber Eats', icon: '🚗', badgeColor: 'bg-emerald-50 text-emerald-800 border-emerald-300' }
+  }
+  if (
+    ordType === 'PICKME' ||
+    ordType === 'PICK_ME' ||
+    ordType === 'PICKMEFOOD' ||
+    src === 'PICKME' ||
+    src === 'PICK_ME' ||
+    src === 'PICKMEFOOD' ||
+    payMethod === 'PICKME' ||
+    payMethod === 'PICK_ME'
+  ) {
+    return { key: 'PICKME', label: 'PickMe Food', icon: '🛵', badgeColor: 'bg-amber-50 text-amber-900 border-amber-300' }
+  }
   if (src === 'SURFHOUSE' || src === 'SURF_HOUSE' || ordType === 'SURFHOUSE' || ordType === 'SURF_HOUSE' || ordType === 'RENTAL') {
     return { key: 'SURFHOUSE', label: 'Surf House / Rentals', icon: '', badgeColor: 'bg-amber-50 text-amber-800 border-amber-200' }
   }
@@ -34,14 +59,39 @@ export const getOrderChannelInfo = (order) => {
 
 export const getOrderLocationLabel = (order) => {
   if (!order) return 'Walk-in / Counter'
+  const src = String(order.source || '').toUpperCase().trim()
+  const ordType = String(order.orderType || '').toUpperCase().trim()
+  const payMethod = String(order.paymentMethod || '').toUpperCase().trim()
+
+  if (
+    ordType === 'UBER' ||
+    ordType === 'UBEREATS' ||
+    ordType === 'UBER_EATS' ||
+    src === 'UBER' ||
+    src === 'UBEREATS' ||
+    src === 'UBER_EATS' ||
+    payMethod === 'UBER' ||
+    payMethod === 'UBEREATS'
+  ) {
+    return 'Uber Eats'
+  }
+  if (
+    ordType === 'PICKME' ||
+    ordType === 'PICK_ME' ||
+    ordType === 'PICKMEFOOD' ||
+    src === 'PICKME' ||
+    src === 'PICK_ME' ||
+    payMethod === 'PICKME' ||
+    payMethod === 'PICK_ME'
+  ) {
+    return 'PickMe Food'
+  }
   if (order.roomNumber !== undefined && order.roomNumber !== null && String(order.roomNumber).trim() !== '') {
     return `Room ${order.roomNumber}`
   }
   if (order.tableNumber !== undefined && order.tableNumber !== null && String(order.tableNumber).trim() !== '') {
     return `Table ${order.tableNumber}`
   }
-  const src = (order.source || '').toUpperCase()
-  const ordType = (order.orderType || '').toUpperCase()
   if (src === 'SURFHOUSE' || src === 'SURF_HOUSE' || ordType === 'SURFHOUSE' || ordType === 'RENTAL') {
     return 'Surf House'
   }
@@ -761,6 +811,8 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       'COUNTER': { key: 'COUNTER', channel: 'Counter / Walk-in', count: 0, total: 0, icon: '' },
       'TABLE': { key: 'TABLE', channel: 'Dine-In (Tables)', count: 0, total: 0, icon: '' },
       'ROOM': { key: 'ROOM', channel: 'Room Service', count: 0, total: 0, icon: '' },
+      'UBER': { key: 'UBER', channel: 'Uber Eats', count: 0, total: 0, icon: '🚗' },
+      'PICKME': { key: 'PICKME', channel: 'PickMe Food', count: 0, total: 0, icon: '🛵' },
       'SURFHOUSE': { key: 'SURFHOUSE', channel: 'Surf House / Rentals', count: 0, total: 0, icon: '' },
       'ONLINE': { key: 'ONLINE', channel: 'Online / QR Orders', count: 0, total: 0, icon: '' },
     }
@@ -856,10 +908,11 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
 
       // Channel aggregation
       const cInfo = getOrderChannelInfo(order)
-      if (channelMap[cInfo.key]) {
-        channelMap[cInfo.key].count += 1
-        channelMap[cInfo.key].total += total
+      if (!channelMap[cInfo.key]) {
+        channelMap[cInfo.key] = { key: cInfo.key, channel: cInfo.label, count: 0, total: 0, icon: cInfo.icon || '' }
       }
+      channelMap[cInfo.key].count += 1
+      channelMap[cInfo.key].total += total
     })
 
     const totalFees = totalCardFees + totalServiceFees
@@ -2234,9 +2287,11 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                 <option value="all">All Channels</option>
                 <option value="TABLE">Dine-In Tables</option>
                 <option value="ROOM">Room Service</option>
+                <option value="UBER">Uber Eats</option>
+                <option value="PICKME">PickMe Food</option>
+                <option value="COUNTER">Counter / Walk-in</option>
                 <option value="SURFHOUSE">Surf House / Rentals</option>
                 <option value="ONLINE">Online / QR Orders</option>
-                <option value="COUNTER">Counter / Walk-in</option>
               </select>
             </div>
 
@@ -3687,13 +3742,17 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                         COUNTER: 'bg-indigo-500',
                         TABLE: 'bg-emerald-500',
                         ROOM: 'bg-purple-500',
-                        SURFHOUSE: 'bg-amber-500',
+                        UBER: 'bg-emerald-600',
+                        PICKME: 'bg-amber-500',
+                        SURFHOUSE: 'bg-amber-600',
                         ONLINE: 'bg-sky-500',
                       }
                       const channelLabels = {
                         COUNTER: 'Counter / Walk-in',
                         TABLE: 'Dine-In (Tables)',
                         ROOM: 'Room Service',
+                        UBER: 'Uber Eats',
+                        PICKME: 'PickMe Food',
                         SURFHOUSE: 'Surf House / Rentals',
                         ONLINE: 'Online / QR',
                       }
