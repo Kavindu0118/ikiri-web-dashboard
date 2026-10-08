@@ -8,6 +8,7 @@ import { jsPDF } from 'jspdf'
 import { cloneTemplate, findTemplateById, menuTemplates } from './data/menuTemplates'
 import DashboardScreen from './components/screens/DashboardScreen'
 import AnalyticsScreen from './components/screens/AnalyticsScreen'
+import CancelledRefundedOrdersScreen from './components/screens/CancelledRefundedOrdersScreen'
 import InventoryScreen from './components/screens/InventoryScreen'
 import MyMenuScreen from './components/screens/MyMenuScreen'
 import SettingsScreen from './components/screens/SettingsScreen'
@@ -15,7 +16,7 @@ import ProfileScreen from './components/screens/ProfileScreen'
 import LandingPage from './components/landing/LandingPage'
 import JsonMenuModal from './components/JsonMenuModal'
 import {
-  IconDashboard, IconMenu, IconSettings, IconProfile, IconQr, IconPlus, IconEdit, IconTrash, IconEye, IconLogout, IconX, IconAnalytics, IconInventory
+  IconDashboard, IconMenu, IconSettings, IconProfile, IconQr, IconPlus, IconEdit, IconTrash, IconEye, IconLogout, IconX, IconAnalytics, IconInventory, IconReceiptAudit
 } from './components/Icons'
 import {
   saveMenuRecord,
@@ -2285,6 +2286,7 @@ function Editor() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: <IconDashboard /> },
     { id: 'analytics', label: 'Analytics', icon: <IconAnalytics /> },
+    { id: 'cancelled-refunded', label: 'Cancel & Refunded Orders', icon: <IconReceiptAudit /> },
     ...(restaurantSettings?.enableBarInventory ? [{ id: 'inventory', label: 'Bar Inventory', icon: <IconInventory /> }] : []),
     { id: 'my-menu', label: 'My Menu', icon: <IconMenu /> },
     { id: 'settings', label: 'Settings', icon: <IconSettings /> },
@@ -2428,6 +2430,12 @@ function Editor() {
               openQrPreview={openQrPreview}
             />}
             {activeSection === 'analytics' && <AnalyticsScreen
+              profile={profile}
+              restaurantSettings={restaurantSettings}
+              restaurantId={restaurantId}
+              setActiveSection={setActiveSection}
+            />}
+            {activeSection === 'cancelled-refunded' && <CancelledRefundedOrdersScreen
               profile={profile}
               restaurantSettings={restaurantSettings}
               restaurantId={restaurantId}

@@ -249,6 +249,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     let cardFees = 0
     let serviceFees = 0
     let highestOrder = 0
+    let voidedOrders = 0
+    let voidedAmount = 0
+    let refundedOrders = 0
+    let refundedAmount = 0
 
     const paymentMethods = {}
     const orderSources = {
@@ -270,9 +274,25 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     })
 
     sorted.forEach((order) => {
-      // Only count PAID orders
-      const isPaid = order.status?.toUpperCase() === 'PAID'
-      if (!isPaid) return
+      const statusUpper = (order.status || 'PAID').toUpperCase()
+
+      // Track voided orders: zero net revenue effect
+      if (statusUpper === 'VOIDED' || statusUpper === 'CANCELLED') {
+        voidedOrders += 1
+        voidedAmount += Number(order.total || 0)
+        return
+      }
+
+      // Track refunded orders: negative revenue impact
+      if (statusUpper === 'REFUNDED') {
+        refundedOrders += 1
+        refundedAmount += Number(order.total || 0)
+        totalRevenue -= Number(order.total || 0)
+        return
+      }
+
+      // Only count PAID orders towards sales metrics
+      if (statusUpper !== 'PAID') return
 
       totalOrders += 1
       const orderTotal = Number(order.total || 0)
@@ -373,6 +393,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       orderSources,
       popularItemsList,
       tablePerformanceList,
+      voidedOrders,
+      voidedAmount,
+      refundedOrders,
+      refundedAmount,
       dailyTrend,
       rawSortedOrders: sorted,
     }
@@ -3402,6 +3426,29 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           </div>
         </div>
       </div>
+
+      {/* Audit Banner for Cancelled & Refunded Orders */}
+      {(stats.voidedOrders > 0 || stats.refundedOrders > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-amber-50/90 border border-amber-200/90 rounded-2xl text-xs shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <span className="px-2 py-1 rounded-lg bg-amber-200/80 text-amber-900 font-bold text-[11px]">
+              Audit Notice
+            </span>
+            <span className="text-neutral-700">
+              There are{' '}
+              <strong className="text-red-600 font-bold">{stats.voidedOrders} voided orders</strong> ({currencySymbol}{stats.voidedAmount.toFixed(2)} zero revenue) and{' '}
+              <strong className="text-amber-800 font-bold">{stats.refundedOrders} refunded orders</strong> (-{currencySymbol}{stats.refundedAmount.toFixed(2)}) recorded in this range.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveSection && setActiveSection('cancelled-refunded')}
+            className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition shadow-2xs"
+          >
+            Review Cancelled & Refunded Orders →
+          </button>
+        </div>
+      )}
 
       {/* Revenue Bar Chart (Synced with top date range, Daily / Monthly toggle) */}
       <RevenueBarChart
