@@ -2596,10 +2596,16 @@ function Editor() {
 // ─── parsePrice / getCurrencySymbol ──────────────────────────────────────────
 const parsePrice = (priceStr) => {
   if (!priceStr) return 0
-  const sanitized = priceStr.replace(/[^\d.]/g, '')
+  const sanitized = String(priceStr).replace(/[^\d.]/g, '')
   const parsed = parseFloat(sanitized)
   return isNaN(parsed) ? 0 : parsed
 }
+
+const getOrderItemUnitPrice = (item) =>
+  parsePrice(item.price) +
+  (Array.isArray(item.addOns)
+    ? item.addOns.reduce((sum, addon) => sum + parsePrice(addon.price), 0)
+    : 0)
 
 const getCurrencySymbol = (priceStr) => {
   if (!priceStr) return '$'
@@ -2617,6 +2623,8 @@ function MenuViewer() {
   const [loading, setLoading] = useState(true)
   const [restaurantSettings, setRestaurantSettings] = useState(null)
   const [cartItems, setCartItems] = useState([])
+  const [pendingAddonItem, setPendingAddonItem] = useState(null)
+  const [selectedAddonKeys, setSelectedAddonKeys] = useState([])
   const [customerName, setCustomerName] = useState('')
   const [specialNote, setSpecialNote] = useState('')
   const [activeOrderId, setActiveOrderId] = useState(null)
@@ -2673,7 +2681,7 @@ function MenuViewer() {
     if (!orderData?.items) {
       return cartItems.reduce(
         (sum, entry) =>
-          sum + parsePrice(entry.price) * entry.qty,
+          sum + getOrderItemUnitPrice(entry) * entry.qty,
         0
       )
     }
@@ -2687,9 +2695,7 @@ function MenuViewer() {
     // fallback for old orders
     return orderData.items.reduce(
       (sum, entry) =>
-        sum +
-        parsePrice(entry.price) *
-        entry.qty,
+        sum + parsePrice(entry.price) * entry.qty,
       0
     )
 
@@ -2828,22 +2834,54 @@ function MenuViewer() {
       : rawOrderStatus || null
   const hasActiveOrder = Boolean(activeOrderId && !['completed', 'confirmed'].includes(orderStatus))
 
-  const addToCart = (item) => {
+  const addItemToCart = (item, addOns = []) => {
     if (hasActiveOrder) return
+    const cartKey = JSON.stringify([
+      item.id,
+      addOns.map((addon) => addon.id || addon.name),
+    ])
     setCartItems((current) => {
-      const existing = current.find((entry) => entry.itemId === item.id)
+      const existing = current.find((entry) => entry.cartKey === cartKey)
       if (existing) {
         return current.map((entry) =>
-          entry.itemId === item.id ? { ...entry, qty: entry.qty + 1 } : entry
+          entry.cartKey === cartKey ? { ...entry, qty: entry.qty + 1 } : entry
         )
       }
-      return [...current, { itemId: item.id, name: item.name || 'Untitled Item', price: item.price || '-', qty: 1 }]
+      return [...current, {
+        cartKey,
+        itemId: item.id,
+        name: item.name || 'Untitled Item',
+        price: item.price || '-',
+        addOns,
+        qty: 1,
+      }]
     })
   }
 
-  const updateCartQty = (itemId, nextQty) => {
+  const addToCart = (item) => {
+    if (hasActiveOrder) return
+    if (Array.isArray(item.addOns) && item.addOns.length > 0) {
+      setPendingAddonItem(item)
+      setSelectedAddonKeys([])
+      return
+    }
+    addItemToCart(item)
+  }
+
+  const confirmAddonSelection = () => {
+    if (!pendingAddonItem) return
+    const addOns = pendingAddonItem.addOns.filter((addon, index) => {
+      const key = addon.id ? String(addon.id) : `${addon.name || 'addon'}-${index}`
+      return selectedAddonKeys.includes(key)
+    })
+    addItemToCart(pendingAddonItem, addOns)
+    setPendingAddonItem(null)
+    setSelectedAddonKeys([])
+  }
+
+  const updateCartQty = (cartKey, nextQty) => {
     setCartItems((current) =>
-      current.map((entry) => (entry.itemId === itemId ? { ...entry, qty: nextQty } : entry)).filter((e) => e.qty > 0)
+      current.map((entry) => (entry.cartKey === cartKey ? { ...entry, qty: nextQty } : entry)).filter((e) => e.qty > 0)
     )
   }
 
@@ -2866,7 +2904,7 @@ function MenuViewer() {
     // calculate new order subtotal from cart
     const newSubtotal = cartItems.reduce(
       (sum, item) =>
-        sum + parsePrice(item.price) * item.qty,
+        sum + getOrderItemUnitPrice(item) * item.qty,
       0
     )
 
@@ -2918,8 +2956,9 @@ function MenuViewer() {
       items: cartItems.map((entry) => ({
         itemId: entry.itemId,
         name: entry.name,
-        price: entry.price,
-        qty: entry.qty
+        price: getOrderItemUnitPrice(entry),
+        qty: entry.qty,
+        addOns: entry.addOns,
       }))
     }
 
@@ -3071,15 +3110,20 @@ function MenuViewer() {
             <div className="border-t border-neutral-200 pt-4">
               <p className="font-mono text-[0.7rem] uppercase tracking-[0.15em] text-neutral-500 mb-3">Ordered Items</p>
               <div className="space-y-3">
-                {orderData.items.map((entry) => {
+                {orderData.items.map((entry, index) => {
                   const priceVal = parsePrice(entry.price)
                   const itemTotal = priceVal * entry.qty
                   const currency = orderCurrency
                   return (
-                    <div key={entry.itemId} className="flex items-center justify-between gap-3 text-sm">
+                    <div key={`${entry.itemId}-${index}`} className="flex items-center justify-between gap-3 text-sm">
                       <div>
                         <p className="font-medium text-neutral-900">{entry.name}</p>
-                        <p className="text-xs text-neutral-500">{entry.price} × {entry.qty}</p>
+                        <p className="text-xs text-neutral-500">{currency}{priceVal.toFixed(2)} × {entry.qty}</p>
+                        {Array.isArray(entry.addOns) && entry.addOns.length > 0 && (
+                          <p className="text-xs text-neutral-500">
+                            Add-ons: {entry.addOns.map((addon) => addon.name).join(', ')}
+                          </p>
+                        )}
                       </div>
                       <p className="font-mono text-sm font-semibold text-neutral-900">{currency}{itemTotal.toFixed(2)}</p>
                     </div>
@@ -3148,15 +3192,20 @@ function MenuViewer() {
             <div className="border-t border-neutral-200 pt-4">
               <p className="font-mono text-[0.7rem] uppercase tracking-[0.15em] text-neutral-500 mb-3">Ordered Items Summary</p>
               <div className="space-y-3">
-                {orderData.items.map((entry) => {
+                {orderData.items.map((entry, index) => {
                   const priceVal = parsePrice(entry.price)
                   const itemTotal = priceVal * entry.qty
                   const currency = orderCurrency
                   return (
-                    <div key={entry.itemId} className="flex items-center justify-between gap-3 text-sm">
+                    <div key={`${entry.itemId}-${index}`} className="flex items-center justify-between gap-3 text-sm">
                       <div>
                         <p className="font-medium text-neutral-900">{entry.name}</p>
-                        <p className="text-xs text-neutral-500">{entry.price} × {entry.qty}</p>
+                        <p className="text-xs text-neutral-500">{currency}{priceVal.toFixed(2)} × {entry.qty}</p>
+                        {Array.isArray(entry.addOns) && entry.addOns.length > 0 && (
+                          <p className="text-xs text-neutral-500">
+                            Add-ons: {entry.addOns.map((addon) => addon.name).join(', ')}
+                          </p>
+                        )}
                       </div>
                       <p className="font-mono text-sm font-semibold text-neutral-900">{currency}{itemTotal.toFixed(2)}</p>
                     </div>
@@ -3241,16 +3290,21 @@ function MenuViewer() {
             <>
               <div className="space-y-3">
                 {cartItems.map((entry) => (
-                  <div key={entry.itemId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm">
+                  <div key={entry.cartKey} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm">
                     <div>
                       <p className="font-medium text-neutral-900">{entry.name}</p>
                       <p className="text-xs text-neutral-500">{entry.price} {entry.qty > 1 ? `× ${entry.qty}` : ''}</p>
+                      {entry.addOns.length > 0 && (
+                        <p className="text-xs text-neutral-500">
+                          Add-ons: {entry.addOns.map((addon) => `${addon.name} (+${orderCurrency}${parsePrice(addon.price).toFixed(2)})`).join(', ')}
+                        </p>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <button type="button" onClick={() => updateCartQty(entry.itemId, entry.qty - 1)}
+                      <button type="button" onClick={() => updateCartQty(entry.cartKey, entry.qty - 1)}
                         className="rounded-full border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700">−</button>
                       <span className="w-6 text-center text-sm font-medium text-neutral-800">{entry.qty}</span>
-                      <button type="button" onClick={() => updateCartQty(entry.itemId, entry.qty + 1)}
+                      <button type="button" onClick={() => updateCartQty(entry.cartKey, entry.qty + 1)}
                         className="rounded-full border border-neutral-300 px-2 py-1 text-xs font-medium text-neutral-700">+</button>
                     </div>
                   </div>
@@ -3490,6 +3544,69 @@ function MenuViewer() {
               )}
             </div>
           )}
+        </div>
+      )}
+      {pendingAddonItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setPendingAddonItem(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="addon-dialog-title"
+            className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="addon-dialog-title" className="text-lg font-semibold text-neutral-900">
+              Choose add-ons
+            </h2>
+            <p className="mt-1 text-sm text-neutral-600">{pendingAddonItem.name || 'Untitled Item'}</p>
+            <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
+              {pendingAddonItem.addOns.map((addon, index) => {
+                const key = addon.id ? String(addon.id) : `${addon.name || 'addon'}-${index}`
+                return (
+                  <label
+                    key={key}
+                    className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-200 p-3 transition hover:bg-neutral-50"
+                  >
+                    <span className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedAddonKeys.includes(key)}
+                        onChange={() => setSelectedAddonKeys((current) =>
+                          current.includes(key)
+                            ? current.filter((selectedKey) => selectedKey !== key)
+                            : [...current, key]
+                        )}
+                        className="h-4 w-4 rounded border-neutral-300 text-green-600 focus:ring-green-600"
+                      />
+                      <span className="text-sm font-medium text-neutral-800">{addon.name || 'Add-on'}</span>
+                    </span>
+                    <span className="text-sm font-mono text-neutral-600">
+                      +{orderCurrency}{parsePrice(addon.price).toFixed(2)}
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingAddonItem(null)}
+                className="rounded-xl border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmAddonSelection}
+                className="rounded-xl bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-black"
+              >
+                Add to cart
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
