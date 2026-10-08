@@ -1,6 +1,7 @@
 import Toggle from '../Toggle'
 import { useState } from 'react'
-import { IconTrash, IconLock, IconEye } from '../Icons'
+import QRCode from 'qrcode'
+import { IconTrash, IconLock, IconEye, IconQr } from '../Icons'
 
 export default function SettingsScreen({
   restaurantSettings,
@@ -56,9 +57,50 @@ export default function SettingsScreen({
   const [tempWebsite, setTempWebsite] = useState(restaurantSettings?.website || '')
 
   const [newCode, setNewCode] = useState('')
+  const [selectedWaiterQr, setSelectedWaiterQr] = useState(null)
+  const [copiedCode, setCopiedCode] = useState(null)
   const [newRoomInput, setNewRoomInput] = useState('')
   const [editingPartitionRoomId, setEditingPartitionRoomId] = useState(null)
   const [tempPartitionCount, setTempPartitionCount] = useState(2)
+
+  const getWaiterUrl = (code) => {
+    const slug = restaurantSettings?.slug || savedMenus?.[0]?.remoteId || savedMenus?.[0]?.slug || ''
+    return `${window.location.origin}/menu/${slug}?waiter=${encodeURIComponent(code)}`
+  }
+
+  const handleCopyWaiterUrl = (code) => {
+    const url = getWaiterUrl(code)
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(url)
+    }
+    setCopiedCode(code)
+    setTimeout(() => setCopiedCode(null), 2500)
+  }
+
+  const handleShowWaiterQr = async (code) => {
+    const url = getWaiterUrl(code)
+    try {
+      const qrDataUrl = await QRCode.toDataURL(url, {
+        width: 360,
+        margin: 1,
+        color: { dark: '#101010', light: '#ffffff' },
+      })
+      setSelectedWaiterQr({ code, url, qrDataUrl })
+    } catch (err) {
+      console.error('Error generating waiter QR:', err)
+      alert('Could not generate QR code.')
+    }
+  }
+
+  const handleDownloadWaiterQr = () => {
+    if (!selectedWaiterQr?.qrDataUrl) return
+    const a = document.createElement('a')
+    a.href = selectedWaiterQr.qrDataUrl
+    a.download = `waiter-${selectedWaiterQr.code}-qr.png`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
 
   const generateRoomToken = () => {
     const chars = '23456789abcdefghjkmnpqrstuvwxyz'
@@ -928,41 +970,89 @@ export default function SettingsScreen({
 
           {/* Waiter Codes */}
           <div className="card p-5">
-            <p className="text-xs font-semibold uppercase tracking-widest mb-4" style={{ color: '#16a34a' }}>Waiter Codes</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#16a34a' }}>Waiter Codes &amp; Unique URLs</p>
+              <span className="text-xs font-semibold text-neutral-500 bg-neutral-100 px-2.5 py-0.5 rounded-full">
+                {waiterCodes.length} / 10
+              </span>
+            </div>
             <p className="text-sm text-neutral-500 mb-4">
-              Manage up to 10 one-time codes (minimum 5 characters) for authenticating waiters.
+              Manage waiter codes. Each code generates a unique ordering URL and QR code with direct waiter tagging and quick table selection.
             </p>
 
             {isWaiterCodesLoading ? (
               <div className="text-sm text-neutral-500 py-2">Loading waiter codes...</div>
             ) : waiterCodes.length === 0 ? (
               <div className="text-sm text-neutral-500 bg-neutral-50 p-4 rounded-xl border border-dashed border-neutral-200 text-center mb-4">
-                No waiter codes added yet.
+                No waiter codes added yet. Add a code below to generate their unique menu URL &amp; QR code.
               </div>
             ) : (
-              <div className="space-y-2 mb-4">
-                {waiterCodes.map(({ code, used }) => (
-                  <div key={code} className="flex items-center justify-between p-3 rounded-xl border border-neutral-100 bg-neutral-50/50">
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-sm font-semibold text-neutral-800">{code}</span>
-                      <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${used
-                          ? 'bg-red-50 text-red-700 border border-red-100'
-                          : 'bg-green-50 text-green-700 border border-green-100'
-                        }`}>
-                        {used ? 'Used' : 'Not Used'}
-                      </span>
+              <div className="space-y-3 mb-4">
+                {waiterCodes.map(({ code, used }) => {
+                  const url = getWaiterUrl(code)
+                  return (
+                    <div key={code} className="p-3.5 rounded-xl border border-neutral-200/90 bg-neutral-50/70 hover:bg-neutral-50 transition">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2.5">
+                          <span className="font-mono text-sm font-bold text-neutral-800">{code}</span>
+                          <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold uppercase tracking-wider ${
+                            used
+                              ? 'bg-red-50 text-red-700 border border-red-100'
+                              : 'bg-green-50 text-green-700 border border-green-100'
+                          }`}>
+                            {used ? 'Used' : 'Active'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleCopyWaiterUrl(code)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 transition shadow-xs"
+                            title="Copy Waiter URL"
+                          >
+                            {copiedCode === code ? (
+                              <span className="text-green-600 font-semibold">✓ Copied</span>
+                            ) : (
+                              <>
+                                <svg className="w-3.5 h-3.5 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                                </svg>
+                                <span>Copy Link</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleShowWaiterQr(code)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-lg border border-green-200 bg-green-50 text-green-700 hover:bg-green-100 transition shadow-xs"
+                            title="Show QR Code"
+                          >
+                            <IconQr />
+                            <span>QR Code</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={isWaiterCodesUpdating}
+                            onClick={() => onDeleteWaiterCode(code)}
+                            className="p-1.5 text-neutral-400 hover:text-red-600 transition disabled:opacity-50 ml-1"
+                            title="Delete waiter code"
+                          >
+                            <IconTrash />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 flex items-center gap-1.5 text-[11px] font-mono text-neutral-400 truncate" title={url}>
+                        <span className="text-neutral-400">URL:</span>
+                        <span className="truncate select-all text-neutral-600">{url}</span>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      disabled={isWaiterCodesUpdating}
-                      onClick={() => onDeleteWaiterCode(code)}
-                      className="text-neutral-400 hover:text-red-600 transition disabled:opacity-50"
-                      title="Delete waiter code"
-                    >
-                      <IconTrash />
-                    </button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
@@ -1036,6 +1126,88 @@ export default function SettingsScreen({
               >
                 Delete
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Waiter QR Code Modal */}
+      {selectedWaiterQr && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="relative w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl text-center">
+            <button
+              type="button"
+              onClick={() => setSelectedWaiterQr(null)}
+              className="absolute top-4 right-4 text-neutral-400 hover:text-neutral-700 p-1.5 rounded-full hover:bg-neutral-100 transition"
+              title="Close"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-50 text-green-600 mb-3">
+              <IconQr />
+            </div>
+
+            <h3 className="text-lg font-bold text-neutral-900">Waiter QR Code</h3>
+            <p className="text-xs font-semibold text-neutral-500 font-mono mt-0.5">
+              Server / Code: {selectedWaiterQr.code}
+            </p>
+
+            <div className="my-5 flex justify-center">
+              <div className="p-3 bg-white border border-neutral-200 rounded-2xl shadow-sm">
+                <img
+                  src={selectedWaiterQr.qrDataUrl}
+                  alt={`QR for ${selectedWaiterQr.code}`}
+                  className="w-56 h-56 object-contain"
+                />
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-2.5 mb-5 text-left">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 mb-1">Direct Menu Link</p>
+              <p className="text-xs font-mono text-neutral-700 break-all select-all">
+                {selectedWaiterQr.url}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadWaiterQr}
+                className="btn-green py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Download QR</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleCopyWaiterUrl(selectedWaiterQr.code)}
+                className="btn-secondary py-2.5 text-xs font-semibold flex items-center justify-center gap-1.5"
+              >
+                {copiedCode === selectedWaiterQr.code ? (
+                  <span className="text-green-600 font-semibold">✓ Copied</span>
+                ) : (
+                  'Copy Link'
+                )}
+              </button>
+            </div>
+
+            <div className="mt-3.5">
+              <a
+                href={selectedWaiterQr.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-semibold text-green-700 hover:text-green-800 hover:underline"
+              >
+                Open Waiter Menu in New Tab →
+              </a>
             </div>
           </div>
         </div>

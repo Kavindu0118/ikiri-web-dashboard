@@ -2293,6 +2293,20 @@ function Editor() {
       })
     }
 
+    // 4. Waiter QR codes if waiter codes exist
+    if (Array.isArray(waiterCodes) && waiterCodes.length > 0) {
+      waiterCodes.forEach((wc) => {
+        qrList.push({
+          type: 'waiter',
+          table: null,
+          room: null,
+          waiter: wc.code,
+          label: `Waiter: ${wc.code}`,
+          url: `${window.location.origin}/menu/${slug}?waiter=${encodeURIComponent(wc.code)}`
+        })
+      })
+    }
+
     const generated = await Promise.all(
       qrList.map(async (q) => ({
         ...q,
@@ -2606,11 +2620,19 @@ function Editor() {
                       className="bg-white rounded-2xl border border-neutral-200 p-4 shadow-sm text-center flex flex-col items-center justify-between w-full"
                     >
                       <div className="mb-2">
-                        <span className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-full mb-1 ${qr.room ? 'bg-emerald-100 text-emerald-800' : qr.table ? 'bg-green-100 text-green-800' : 'bg-neutral-100 text-neutral-700'}`}>
-                          {qr.room ? '🛏️ Room Service' : qr.table ? '🍽️ Dine-in Table' : '📖 General Menu'}
+                        <span className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-full mb-1 ${
+                          qr.type === 'waiter'
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : qr.room
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : qr.table
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-neutral-100 text-neutral-700'
+                        }`}>
+                          {qr.type === 'waiter' ? '👨‍🍳 Waiter Staff' : qr.room ? '🛏️ Room Service' : qr.table ? '🍽️ Dine-in Table' : '📖 General Menu'}
                         </span>
                         <h3 className="font-bold text-neutral-900 text-sm">
-                          {qr.room ? `Room ${qr.room}` : qr.table ? `Table ${qr.table}` : "Main Menu QR"}
+                          {qr.type === 'waiter' ? `Waiter: ${qr.waiter}` : qr.room ? `Room ${qr.room}` : qr.table ? `Table ${qr.table}` : "Main Menu QR"}
                         </h3>
                       </div>
                       <img
@@ -2692,7 +2714,11 @@ function MenuViewer() {
   const { id, tableNo } = useParams()
   const [searchParams] = useSearchParams()
   const roomKeyParam = searchParams.get('rk') || (tableNo && tableNo.startsWith('room-') ? tableNo.replace('room-', '') : null)
+  const waiterParam = searchParams.get('waiter') || searchParams.get('waiterCode') || (tableNo && tableNo.startsWith('waiter-') ? tableNo.replace('waiter-', '') : null)
+  const isWaiterMode = Boolean(waiterParam)
+  const waiterName = waiterParam ? decodeURIComponent(waiterParam).trim() : ''
 
+  const [selectedWaiterTable, setSelectedWaiterTable] = useState(null)
   const [menuData, setMenuData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [restaurantSettings, setRestaurantSettings] = useState(null)
@@ -2712,6 +2738,9 @@ function MenuViewer() {
 
   // Resolve room or table location
   const activeLocation = useMemo(() => {
+    if (isWaiterMode && selectedWaiterTable) {
+      return { type: 'table', tableNumber: selectedWaiterTable }
+    }
     if (roomKeyParam && restaurantSettings?.rooms) {
       const matched = restaurantSettings.rooms.find(
         (r) => r.token && r.token.toLowerCase() === roomKeyParam.toLowerCase()
@@ -2724,7 +2753,12 @@ function MenuViewer() {
       return { type: 'table', tableNumber: tableNo.replace('tableNo-', '') }
     }
     return null
-  }, [roomKeyParam, tableNo, restaurantSettings?.rooms])
+  }, [isWaiterMode, selectedWaiterTable, roomKeyParam, tableNo, restaurantSettings?.rooms])
+
+  const totalWaiterTables = useMemo(() => {
+    const configured = Number(restaurantSettings?.tableCount || 0)
+    return configured > 0 ? configured : 12
+  }, [restaurantSettings?.tableCount])
 
   const orderStorageKey = id ? `qr-order-${id}` : null
   const historyStorageKey = id ? `qr-order-history-${id}` : null
@@ -2960,10 +2994,19 @@ function MenuViewer() {
   }
 
   const placeOrder = async () => {
-    if (!menuData?.restaurantId || !allowOnlineOrders) return
+    if (!menuData?.restaurantId || (!allowOnlineOrders && !isWaiterMode)) return
 
-    if (!customerName.trim()) {
+    if (!isWaiterMode && !customerName.trim()) {
       setOrderError('Please add your name before placing the order.')
+      return
+    }
+
+    const resolvedTableNo = isWaiterMode
+      ? (selectedWaiterTable || (tableNo && tableNo.startsWith('tableNo-') ? tableNo.replace('tableNo-', '') : null))
+      : (activeLocation?.type === 'table' ? activeLocation.tableNumber : (tableNo && tableNo.startsWith('tableNo-') ? tableNo.replace('tableNo-', '') : null))
+
+    if (isWaiterMode && !resolvedTableNo) {
+      setOrderError('Please select a table number from the grid before placing the order.')
       return
     }
 
@@ -2995,14 +3038,14 @@ function MenuViewer() {
     const newTotal =
       newSubtotal + newServiceFee
 
-    const resolvedTableNo = activeLocation?.type === 'table' ? activeLocation.tableNumber : (tableNo && tableNo.startsWith('tableNo-') ? tableNo.replace("tableNo-", "") : null)
-    const resolvedRoomNo = activeLocation?.type === 'room' ? activeLocation.roomNumber : null
+    const resolvedRoomNo = isWaiterMode ? null : (activeLocation?.type === 'room' ? activeLocation.roomNumber : null)
+    const finalCustomerName = isWaiterMode ? waiterName : customerName.trim()
 
     const orderPayload = {
-      orderType: activeLocation?.type || (resolvedTableNo ? 'table' : 'online'),
+      orderType: isWaiterMode ? 'table' : (activeLocation?.type || (resolvedTableNo ? 'table' : 'online')),
       tableNo: resolvedTableNo,
       roomNo: resolvedRoomNo,
-      location: activeLocation || (resolvedTableNo ? { type: 'table', tableNumber: resolvedTableNo } : null),
+      location: resolvedTableNo ? { type: 'table', tableNumber: resolvedTableNo } : (activeLocation || null),
       menuId: id,
       menuTitle: menuData.menuTitle,
       restaurantId: menuData.restaurantId,
@@ -3010,8 +3053,13 @@ function MenuViewer() {
       currency:
         restaurantSettings?.currency || 'LKR',
       deviceId,
-      customerName:
-        customerName.trim(),
+      customerName: finalCustomerName,
+      waiterName: isWaiterMode ? waiterName : null,
+      waiterCode: isWaiterMode ? waiterName : null,
+      serverName: isWaiterMode ? waiterName : null,
+      source: isWaiterMode ? 'WAITER' : (activeLocation?.type ? 'TABLE_QR' : 'QR'),
+      isQrOrder: isWaiterMode ? false : true,
+      orderSource: isWaiterMode ? 'waiter' : 'qr',
       specialNote:
         specialNote.trim(),
       subtotal: newSubtotal,
@@ -3104,7 +3152,7 @@ function MenuViewer() {
     <TemplateMenuPreview
       menu={{ ...menuData, restaurantAddress: restaurantSettings?.address, restaurantPhone: restaurantSettings?.phone, restaurantWebsite: restaurantSettings?.website }}
       currencySymbol={currencySymbol}
-      orderingEnabled={allowOnlineOrders && !hasActiveOrder}
+      orderingEnabled={(allowOnlineOrders || isWaiterMode) && !hasActiveOrder}
       onAddToCart={addToCart}
     />
   )
@@ -3118,6 +3166,11 @@ function MenuViewer() {
             <h3 className="text-xl font-semibold text-neutral-900">
               {orderStatus ? 'Your order' : 'Your cart'}
             </h3>
+            {isWaiterMode && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 text-xs font-bold text-emerald-800 shadow-xs">
+                👨‍🍳 Server: {waiterName}
+              </span>
+            )}
             {activeLocation?.type === 'room' && (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
                 🛏️ Room {activeLocation.roomNumber}
@@ -3141,7 +3194,7 @@ function MenuViewer() {
         )}
       </div>
 
-      {!allowOnlineOrders && (
+      {!allowOnlineOrders && !isWaiterMode && (
         <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
           <div className="flex items-center gap-2.5">
             <span className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse"></span>
@@ -3153,7 +3206,7 @@ function MenuViewer() {
         </div>
       )}
 
-      {allowOnlineOrders && hasActiveOrder && orderStatus !== 'completed' && (
+      {(allowOnlineOrders || isWaiterMode) && hasActiveOrder && orderStatus !== 'completed' && (
         <div className="mt-4 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-neutral-600">Your order has been placed. Status updates will appear here automatically.</p>
@@ -3246,10 +3299,24 @@ function MenuViewer() {
               </div>
             </div>
           )}
+          {isWaiterMode && (
+            <div className="pt-3 border-t border-neutral-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  clearOrder()
+                  setSelectedWaiterTable(null)
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition active:scale-95"
+              >
+                <span>+</span> Take Next Table Order
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {allowOnlineOrders && ['completed', 'confirmed'].includes(orderStatus) && (
+      {(allowOnlineOrders || isWaiterMode) && ['completed', 'confirmed'].includes(orderStatus) && (
         <div className="mt-4 space-y-4">
           <div className="flex items-center justify-between gap-3 text-sm text-neutral-600">
             <p>
@@ -3331,26 +3398,77 @@ function MenuViewer() {
         </div>
       )}
 
-      {allowOnlineOrders && !hasActiveOrder && !['completed', 'confirmed'].includes(orderStatus) && (
+      {(allowOnlineOrders || isWaiterMode) && !hasActiveOrder && !['completed', 'confirmed'].includes(orderStatus) && (
         <div className="mt-4 space-y-4">
-          <label className="text-sm text-neutral-600">
-            <span className="mb-2 block font-medium text-neutral-900">Your name</span>
-            <input
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-900"
-              placeholder="Enter your name"
-            />
-          </label>
+          {/* Customer Name or Waiter Name Label */}
+          {isWaiterMode ? (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3.5 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Server / Waiter</span>
+                  <span className="text-sm font-bold text-neutral-950 flex items-center gap-1.5 mt-0.5">
+                    <span>👨‍🍳</span> {waiterName}
+                  </span>
+                </div>
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-emerald-200/70 text-emerald-800 uppercase tracking-wider">
+                  Waiter Order
+                </span>
+              </div>
+            </div>
+          ) : (
+            <label className="text-sm text-neutral-600">
+              <span className="mb-2 block font-medium text-neutral-900">Your name</span>
+              <input
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-900"
+                placeholder="Enter your name"
+              />
+            </label>
+          )}
+
+          {/* Table Square Grid for Waiter */}
+          {isWaiterMode && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-neutral-800 flex items-center gap-1">
+                  <span>🍽️</span> Select Table {selectedWaiterTable ? `(Table ${selectedWaiterTable})` : ''}
+                </span>
+                {!selectedWaiterTable && (
+                  <span className="text-[11px] text-red-500 font-semibold">* Tap a table below</span>
+                )}
+              </div>
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-44 overflow-y-auto p-1.5 bg-neutral-50 rounded-xl border border-neutral-200">
+                {Array.from({ length: totalWaiterTables }, (_, idx) => {
+                  const tNum = String(idx + 1)
+                  const isSelected = selectedWaiterTable === tNum
+                  return (
+                    <button
+                      key={tNum}
+                      type="button"
+                      onClick={() => setSelectedWaiterTable(tNum)}
+                      className={`h-11 rounded-lg text-sm font-bold transition flex items-center justify-center border shadow-xs ${
+                        isSelected
+                          ? 'bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-300 shadow-md scale-105'
+                          : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-400 hover:bg-neutral-100'
+                      }`}
+                    >
+                      {tNum}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           <label className="text-sm text-neutral-600">
             <span className="mb-2 block font-medium text-neutral-900">Special note</span>
             <textarea
               value={specialNote}
               onChange={(e) => setSpecialNote(e.target.value)}
-              rows={3}
+              rows={2}
               className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-900"
-              placeholder="Any allergies, spice preference, or delivery instructions?"
+              placeholder={isWaiterMode ? "Any kitchen notes or customer requests?" : "Any allergies, spice preference, or delivery instructions?"}
             />
           </label>
 
@@ -3505,14 +3623,14 @@ function MenuViewer() {
       </div>
 
       {/* ── Sticky bottom notice when busy (mobile only) ── */}
-      {!allowOnlineOrders && (
+      {!allowOnlineOrders && !isWaiterMode && (
         <div className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-amber-600 px-4 py-3 text-center text-xs font-bold text-white shadow-lg">
           Currently Busy • QR Orders Disabled
         </div>
       )}
 
       {/* ── Sticky bottom cart bar (mobile only, ordering enabled) ─ */}
-      {allowOnlineOrders && (
+      {(allowOnlineOrders || isWaiterMode) && (
         <div className="fixed bottom-0 left-0 right-0 z-40 md:hidden">
           {/* Backdrop when drawer is open */}
           {showCartDrawer && (
