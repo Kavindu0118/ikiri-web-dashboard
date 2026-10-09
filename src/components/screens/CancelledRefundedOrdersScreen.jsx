@@ -742,7 +742,7 @@ export default function CancelledRefundedOrdersScreen({
             <span className="text-xs text-neutral-400 font-medium">active</span>
             {occupiedTableCount > 0 && (
               <span className="ml-auto text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md">
-                {occupiedTableCount} table{occupiedTableCount > 1 ? 's' : ''} open
+                {occupiedTableCount} table{occupiedTableCount > 1 ? 's' : ''} occupied
               </span>
             )}
           </div>
@@ -854,12 +854,9 @@ export default function CancelledRefundedOrdersScreen({
               onChange={(e) => setDateFilter(e.target.value)}
               className="text-xs font-semibold px-3 py-1.5 bg-neutral-50 border border-neutral-200 rounded-xl text-neutral-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
-              <option value="all">All Dates</option>
               <option value="today">Today</option>
               <option value="yesterday">Yesterday</option>
               <option value="7d">Last 7 Days</option>
-              <option value="30d">Last 30 Days</option>
-              <option value="custom">Custom Range</option>
             </select>
 
             {dateFilter === 'custom' && (
@@ -1292,15 +1289,15 @@ export default function CancelledRefundedOrdersScreen({
                     return (
                       <div
                         key={tableNum}
-                        className="p-3.5 rounded-2xl bg-neutral-50/70 border border-neutral-200/70 flex flex-col justify-between min-h-[95px] text-left opacity-60"
+                        className="p-3.5 rounded-2xl bg-emerald-50/30 border border-emerald-300 flex flex-col justify-between min-h-[95px] text-left"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-bold text-sm text-neutral-600">
+                          <span className="font-bold text-sm text-neutral-700">
                             Table {tableNum}
                           </span>
-                          <span className="h-1.5 w-1.5 rounded-full bg-neutral-300"></span>
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
                         </div>
-                        <span className="text-xs text-neutral-400">Available</span>
+                        <span className="text-xs text-emerald-600 font-medium">Available</span>
                         <div></div>
                       </div>
                     )
