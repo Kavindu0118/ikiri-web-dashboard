@@ -21,6 +21,7 @@ import {
 import {
   saveMenuRecord,
   getMenuRecord,
+  getCachedMenuRecord,
   getRestaurantMenu,
   getRestaurantSettings,
   subscribeToRestaurantSettings,
@@ -2719,12 +2720,14 @@ function MenuViewer() {
   const waiterName = waiterParam ? decodeURIComponent(waiterParam).trim() : ''
 
   const [selectedWaiterTable, setSelectedWaiterTable] = useState(null)
-  const [menuData, setMenuData] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [menuData, setMenuData] = useState(() => getCachedMenuRecord(id))
+  const [loading, setLoading] = useState(() => !getCachedMenuRecord(id))
+  const [isRefreshingMenu, setIsRefreshingMenu] = useState(false)
   const [restaurantSettings, setRestaurantSettings] = useState(null)
   const [cartItems, setCartItems] = useState([])
   const [pendingAddonItem, setPendingAddonItem] = useState(null)
   const [selectedAddonKeys, setSelectedAddonKeys] = useState([])
+  const [itemSpecialNote, setItemSpecialNote] = useState('')
   const [customerName, setCustomerName] = useState('')
   const [specialNote, setSpecialNote] = useState('')
   const [activeOrderId, setActiveOrderId] = useState(null)
@@ -2862,11 +2865,28 @@ function MenuViewer() {
       : '$'
   }, [restaurantSettings])
 
+  const handleRefreshMenu = async () => {
+    if (!id || isRefreshingMenu) return
+    setIsRefreshingMenu(true)
+    try {
+      const freshData = await getMenuRecord(id, true)
+      if (freshData) {
+        setMenuData(freshData)
+      }
+    } catch (err) {
+      console.warn('Failed to refresh menu:', err)
+    } finally {
+      setIsRefreshingMenu(false)
+    }
+  }
+
   useEffect(() => {
     async function load() {
       if (id) {
         const data = await getMenuRecord(id)
-        setMenuData(data)
+        if (data) {
+          setMenuData(data)
+        }
       }
       setLoading(false)
     }
@@ -2942,11 +2962,13 @@ function MenuViewer() {
       : rawOrderStatus || null
   const hasActiveOrder = Boolean(activeOrderId && !['completed', 'confirmed'].includes(orderStatus))
 
-  const addItemToCart = (item, addOns = []) => {
+  const addItemToCart = (item, addOns = [], specialOptions = '') => {
     if (hasActiveOrder) return
+    const trimmedNote = (specialOptions || '').trim()
     const cartKey = JSON.stringify([
       item.id,
       addOns.map((addon) => addon.id || addon.name),
+      trimmedNote,
     ])
     setCartItems((current) => {
       const existing = current.find((entry) => entry.cartKey === cartKey)
@@ -2961,6 +2983,7 @@ function MenuViewer() {
         name: item.name || 'Untitled Item',
         price: item.price || '-',
         addOns,
+        specialOptions: trimmedNote,
         qty: 1,
       }]
     })
@@ -2968,9 +2991,10 @@ function MenuViewer() {
 
   const addToCart = (item) => {
     if (hasActiveOrder) return
-    if (Array.isArray(item.addOns) && item.addOns.length > 0) {
+    if (isWaiterMode || (Array.isArray(item.addOns) && item.addOns.length > 0)) {
       setPendingAddonItem(item)
       setSelectedAddonKeys([])
+      setItemSpecialNote('')
       return
     }
     addItemToCart(item)
@@ -2978,13 +3002,16 @@ function MenuViewer() {
 
   const confirmAddonSelection = () => {
     if (!pendingAddonItem) return
-    const addOns = pendingAddonItem.addOns.filter((addon, index) => {
-      const key = addon.id ? String(addon.id) : `${addon.name || 'addon'}-${index}`
-      return selectedAddonKeys.includes(key)
-    })
-    addItemToCart(pendingAddonItem, addOns)
+    const addOns = Array.isArray(pendingAddonItem.addOns)
+      ? pendingAddonItem.addOns.filter((addon, index) => {
+          const key = addon.id ? String(addon.id) : `${addon.name || 'addon'}-${index}`
+          return selectedAddonKeys.includes(key)
+        })
+      : []
+    addItemToCart(pendingAddonItem, addOns, itemSpecialNote)
     setPendingAddonItem(null)
     setSelectedAddonKeys([])
+    setItemSpecialNote('')
   }
 
   const updateCartQty = (cartKey, nextQty) => {
@@ -3080,6 +3107,7 @@ function MenuViewer() {
         name: entry.name,
         price: getOrderItemUnitPrice(entry),
         qty: entry.qty,
+        specialOptions: entry.specialOptions || '',
         addOns: entry.addOns,
       }))
     }
@@ -3166,21 +3194,28 @@ function MenuViewer() {
             <h3 className="text-xl font-semibold text-neutral-900">
               {orderStatus ? 'Your order' : 'Your cart'}
             </h3>
-            {isWaiterMode && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 text-xs font-bold text-emerald-800 shadow-xs">
-                👨‍🍳 Server: {waiterName}
-              </span>
-            )}
             {activeLocation?.type === 'room' && (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800">
-                🛏️ Room {activeLocation.roomNumber}
+                Room {activeLocation.roomNumber}
               </span>
             )}
             {activeLocation?.type === 'table' && (
               <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-800">
-                🍽️ Table {activeLocation.tableNumber}
+                Table {activeLocation.tableNumber}
               </span>
             )}
+            <button
+              type="button"
+              onClick={handleRefreshMenu}
+              disabled={isRefreshingMenu}
+              className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-[11px] font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 transition disabled:opacity-50 cursor-pointer"
+              title="Sync latest menu from server"
+            >
+              <svg className={`h-3 w-3 ${isRefreshingMenu ? 'animate-spin text-green-600' : 'text-neutral-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>{isRefreshingMenu ? 'Syncing...' : 'Sync Menu'}</span>
+            </button>
           </div>
         </div>
         {orderStatus && (
@@ -3249,6 +3284,11 @@ function MenuViewer() {
                         {Array.isArray(entry.addOns) && entry.addOns.length > 0 && (
                           <p className="text-xs text-neutral-500">
                             Add-ons: {entry.addOns.map((addon) => addon.name).join(', ')}
+                          </p>
+                        )}
+                        {entry.specialOptions && (
+                          <p className="text-xs text-amber-700 font-medium mt-0.5">
+                            Note: {entry.specialOptions}
                           </p>
                         )}
                       </div>
@@ -3347,6 +3387,11 @@ function MenuViewer() {
                             Add-ons: {entry.addOns.map((addon) => addon.name).join(', ')}
                           </p>
                         )}
+                        {entry.specialOptions && (
+                          <p className="text-xs text-amber-700 font-medium mt-0.5">
+                            Note: {entry.specialOptions}
+                          </p>
+                        )}
                       </div>
                       <p className="font-mono text-sm font-semibold text-neutral-900">{currency}{itemTotal.toFixed(2)}</p>
                     </div>
@@ -3400,22 +3445,8 @@ function MenuViewer() {
 
       {(allowOnlineOrders || isWaiterMode) && !hasActiveOrder && !['completed', 'confirmed'].includes(orderStatus) && (
         <div className="mt-4 space-y-4">
-          {/* Customer Name or Waiter Name Label */}
-          {isWaiterMode ? (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3.5 shadow-xs">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Server / Waiter</span>
-                  <span className="text-sm font-bold text-neutral-950 flex items-center gap-1.5 mt-0.5">
-                    <span>👨‍🍳</span> {waiterName}
-                  </span>
-                </div>
-                <span className="text-[10px] px-2.5 py-0.5 rounded-full font-bold bg-emerald-200/70 text-emerald-800 uppercase tracking-wider">
-                  Waiter Order
-                </span>
-              </div>
-            </div>
-          ) : (
+          {/* Customer Name input for regular QR orders */}
+          {!isWaiterMode && (
             <label className="text-sm text-neutral-600">
               <span className="mb-2 block font-medium text-neutral-900">Your name</span>
               <input
@@ -3431,8 +3462,8 @@ function MenuViewer() {
           {isWaiterMode && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-neutral-800 flex items-center gap-1">
-                  <span>🍽️</span> Select Table {selectedWaiterTable ? `(Table ${selectedWaiterTable})` : ''}
+                <span className="text-xs font-bold uppercase tracking-wider text-neutral-800">
+                  Select Table {selectedWaiterTable ? `(Table ${selectedWaiterTable})` : ''}
                 </span>
                 {!selectedWaiterTable && (
                   <span className="text-[11px] text-red-500 font-semibold">* Tap a table below</span>
@@ -3489,6 +3520,11 @@ function MenuViewer() {
                       {entry.addOns.length > 0 && (
                         <p className="text-xs text-neutral-500">
                           Add-ons: {entry.addOns.map((addon) => `${addon.name} (+${orderCurrency}${parsePrice(addon.price).toFixed(2)})`).join(', ')}
+                        </p>
+                      )}
+                      {entry.specialOptions && (
+                        <p className="text-xs text-amber-700 font-medium mt-0.5">
+                          Note: {entry.specialOptions}
                         </p>
                       )}
                     </div>
@@ -3551,6 +3587,35 @@ function MenuViewer() {
       {/* ── Main scrollable content ─────────────────────────────── */}
       <div className="py-10 px-4 pb-28 md:pb-10">
         <div className="mx-auto flex max-w-4xl flex-col gap-6">
+          {/* Top Bar with Server status & Refresh button */}
+          <div className="flex items-center justify-between gap-3 px-1 -mb-2">
+            <div className="flex items-center gap-2">
+              {isWaiterMode && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 border border-emerald-300 px-3 py-1 text-xs font-bold text-emerald-800 shadow-2xs">
+                  Server: {waiterName}
+                </span>
+              )}
+              {activeLocation?.type === 'table' && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-100 border border-green-300 px-2.5 py-1 text-xs font-bold text-green-800 shadow-2xs">
+                  Table {activeLocation.tableNumber}
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRefreshMenu}
+              disabled={isRefreshingMenu}
+              className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200/90 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 shadow-2xs hover:bg-neutral-50 hover:text-neutral-900 transition active:scale-95 disabled:opacity-60 cursor-pointer ml-auto"
+              title="Refresh latest menu from server"
+            >
+              <svg className={`h-3.5 w-3.5 ${isRefreshingMenu ? 'animate-spin text-green-600' : 'text-neutral-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.3">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>{isRefreshingMenu ? 'Refreshing...' : 'Refresh Menu'}</span>
+            </button>
+          </div>
+
           {/* Busy banner alert */}
           {!allowOnlineOrders && (
             <div className="rounded-2xl border border-amber-400/60 bg-amber-500/10 p-4 text-amber-900 shadow-sm sm:p-5">
@@ -3741,7 +3806,11 @@ function MenuViewer() {
       {pendingAddonItem && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setPendingAddonItem(null)}
+          onClick={() => {
+            setPendingAddonItem(null)
+            setSelectedAddonKeys([])
+            setItemSpecialNote('')
+          }}
         >
           <div
             role="dialog"
@@ -3751,41 +3820,64 @@ function MenuViewer() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2 id="addon-dialog-title" className="text-lg font-semibold text-neutral-900">
-              Choose add-ons
+              {Array.isArray(pendingAddonItem.addOns) && pendingAddonItem.addOns.length > 0
+                ? 'Customize Item'
+                : 'Add Item'}
             </h2>
-            <p className="mt-1 text-sm text-neutral-600">{pendingAddonItem.name || 'Untitled Item'}</p>
-            <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
-              {pendingAddonItem.addOns.map((addon, index) => {
-                const key = addon.id ? String(addon.id) : `${addon.name || 'addon'}-${index}`
-                return (
-                  <label
-                    key={key}
-                    className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-200 p-3 transition hover:bg-neutral-50"
-                  >
-                    <span className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedAddonKeys.includes(key)}
-                        onChange={() => setSelectedAddonKeys((current) =>
-                          current.includes(key)
-                            ? current.filter((selectedKey) => selectedKey !== key)
-                            : [...current, key]
-                        )}
-                        className="h-4 w-4 rounded border-neutral-300 text-green-600 focus:ring-green-600"
-                      />
-                      <span className="text-sm font-medium text-neutral-800">{addon.name || 'Add-on'}</span>
-                    </span>
-                    <span className="text-sm font-mono text-neutral-600">
-                      +{orderCurrency}{parsePrice(addon.price).toFixed(2)}
-                    </span>
-                  </label>
-                )
-              })}
+            <p className="mt-1 text-sm font-medium text-neutral-600">{pendingAddonItem.name || 'Untitled Item'}</p>
+            {Array.isArray(pendingAddonItem.addOns) && pendingAddonItem.addOns.length > 0 && (
+              <div className="mt-4">
+                <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wider mb-2">Choose add-ons</p>
+                <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                  {pendingAddonItem.addOns.map((addon, index) => {
+                    const key = addon.id ? String(addon.id) : `${addon.name || 'addon'}-${index}`
+                    return (
+                      <label
+                        key={key}
+                        className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-neutral-200 p-3 transition hover:bg-neutral-50"
+                      >
+                        <span className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedAddonKeys.includes(key)}
+                            onChange={() => setSelectedAddonKeys((current) =>
+                              current.includes(key)
+                                ? current.filter((selectedKey) => selectedKey !== key)
+                                : [...current, key]
+                            )}
+                            className="h-4 w-4 rounded border-neutral-300 text-green-600 focus:ring-green-600"
+                          />
+                          <span className="text-sm font-medium text-neutral-800">{addon.name || 'Add-on'}</span>
+                        </span>
+                        <span className="text-sm font-mono text-neutral-600">
+                          +{orderCurrency}{parsePrice(addon.price).toFixed(2)}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            <div className="mt-4">
+              <label className="block text-xs font-semibold text-neutral-700 uppercase tracking-wider mb-1.5">
+                Special Note / Instructions <span className="text-neutral-400 font-normal lowercase">(optional)</span>
+              </label>
+              <textarea
+                value={itemSpecialNote}
+                onChange={(e) => setItemSpecialNote(e.target.value)}
+                placeholder="e.g. No spicy, extra chili paste on the side, less ice..."
+                rows={2}
+                className="w-full rounded-xl border border-neutral-300 px-3 py-2 text-sm outline-none transition focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
+              />
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setPendingAddonItem(null)}
+                onClick={() => {
+                  setPendingAddonItem(null)
+                  setSelectedAddonKeys([])
+                  setItemSpecialNote('')
+                }}
                 className="rounded-xl border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
               >
                 Cancel
@@ -3795,7 +3887,7 @@ function MenuViewer() {
                 onClick={confirmAddonSelection}
                 className="rounded-xl bg-neutral-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-black"
               >
-                Add to cart
+                Add Item
               </button>
             </div>
           </div>

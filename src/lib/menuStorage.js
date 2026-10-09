@@ -118,8 +118,79 @@ const ensureUniqueRestaurantSlug = async (restaurantName) => {
   return `${baseSlug}-${Date.now()}`
 }
 
-export const getMenuRecord = async (menuId) => {
-  if (!isFirebaseConfigured || !db || !menuId) return null
+const MENU_CACHE_PREFIX = 'ikiri_menu_cache_'
+const DEFAULT_MENU_CACHE_TTL_MS = 2 * 60 * 60 * 1000 // 2 hours TTL
+
+export const getCachedMenuRecord = (menuId) => {
+  if (!menuId || typeof window === 'undefined') return null
+  try {
+    const key = `${MENU_CACHE_PREFIX}${encodeURIComponent(String(menuId).toLowerCase().trim())}`
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || !parsed.data) return null
+    const age = Date.now() - (parsed.cachedAt || 0)
+    if (age > (parsed.ttlMs || DEFAULT_MENU_CACHE_TTL_MS)) {
+      window.localStorage.removeItem(key)
+      return null
+    }
+    return parsed.data
+  } catch {
+    return null
+  }
+}
+
+export const setCachedMenuRecord = (menuId, data, ttlMs = DEFAULT_MENU_CACHE_TTL_MS) => {
+  if (!menuId || !data || typeof window === 'undefined') return
+  try {
+    const entry = JSON.stringify({
+      data,
+      cachedAt: Date.now(),
+      ttlMs,
+    })
+    const key = `${MENU_CACHE_PREFIX}${encodeURIComponent(String(menuId).toLowerCase().trim())}`
+    window.localStorage.setItem(key, entry)
+
+    if (data.restaurantId && String(data.restaurantId).toLowerCase() !== String(menuId).toLowerCase()) {
+      window.localStorage.setItem(
+        `${MENU_CACHE_PREFIX}${encodeURIComponent(String(data.restaurantId).toLowerCase().trim())}`,
+        entry
+      )
+    }
+    const slug = data.restaurantData?.slug || data.slug
+    if (slug && String(slug).toLowerCase() !== String(menuId).toLowerCase()) {
+      window.localStorage.setItem(
+        `${MENU_CACHE_PREFIX}${encodeURIComponent(String(slug).toLowerCase().trim())}`,
+        entry
+      )
+    }
+  } catch (err) {
+    console.warn('Failed to cache menu record in localStorage:', err)
+  }
+}
+
+export const clearMenuCache = (menuId) => {
+  if (!menuId || typeof window === 'undefined') return
+  try {
+    const key = `${MENU_CACHE_PREFIX}${encodeURIComponent(String(menuId).toLowerCase().trim())}`
+    window.localStorage.removeItem(key)
+  } catch {
+    // ignore
+  }
+}
+
+export const getMenuRecord = async (menuId, forceFresh = false) => {
+  if (!menuId) return null
+
+  // 1. Check browser localStorage cache
+  if (!forceFresh) {
+    const cached = getCachedMenuRecord(menuId)
+    if (cached) {
+      return cached
+    }
+  }
+
+  if (!isFirebaseConfigured || !db) return null
 
   const byRestaurantIdRef = doc(db, RESTAURANTS_COLLECTION, menuId)
   const byRestaurantIdSnap = await getDoc(byRestaurantIdRef)
@@ -143,11 +214,16 @@ export const getMenuRecord = async (menuId) => {
   const menuSnap = await getDoc(menuRef)
   if (!menuSnap.exists()) return null
 
-  return normalizeMenu({
+  const normalized = normalizeMenu({
     restaurantId,
     restaurantData,
     menuData: menuSnap.data(),
   })
+
+  // 2. Save fresh record to browser localStorage cache
+  setCachedMenuRecord(menuId, normalized)
+
+  return normalized
 }
 
 export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = null) => {
@@ -191,6 +267,10 @@ export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = nul
     isPublished: true,
     updatedAt: serverTimestamp(),
   }, { merge: true })
+
+  clearMenuCache(restaurantId)
+  if (finalSlug) clearMenuCache(finalSlug)
+  if (customSlug) clearMenuCache(customSlug)
 
   return {
     remoteSaved: true,
@@ -426,6 +506,7 @@ export const deleteMenuRecord = async (restaurantId) => {
   try {
     const menuRef = doc(db, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC)
     await deleteDoc(menuRef)
+    clearMenuCache(restaurantId)
     return true
   } catch (error) {
     console.error("Error deleting menu:", error)
