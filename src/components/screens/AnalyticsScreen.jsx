@@ -257,7 +257,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           todayOrders.forEach((o) => map.set(o.id, { ...map.get(o.id), ...o }))
           const merged = Array.from(map.values())
           // Automatically persist live orders to IndexedDB cache
-          saveOrdersToCache(targetRestaurantId, todayOrders).catch(() => {})
+          saveOrdersToCache(targetRestaurantId, todayOrders).catch(() => { })
           return merged
         })
       },
@@ -534,7 +534,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
 
   const allItemsStats = useMemo(() => {
     const now = new Date()
-    
+
     // First, filter orders in the date range
     const filteredOrdersForItems = orders.filter((order) => {
       let orderDate
@@ -640,7 +640,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     // Convert items map to sorted array
     const itemsList = Object.keys(itemsMap).map((name) => {
       const item = itemsMap[name]
-      const avgPrice = item.qty > 0 ? item.revenue / item.qty : (item.prices.length > 0 ? item.prices.reduce((a,b)=>a+b, 0) / item.prices.length : 0)
+      const avgPrice = item.qty > 0 ? item.revenue / item.qty : (item.prices.length > 0 ? item.prices.reduce((a, b) => a + b, 0) / item.prices.length : 0)
       const contributionPct = overallRevenue > 0 ? (item.revenue / overallRevenue) * 100 : 0
       return {
         name,
@@ -1827,9 +1827,9 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       <div className="p-6 sm:p-8 flex flex-col items-center justify-center min-h-[70vh] max-w-xl mx-auto text-center">
         <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-amber-50 text-amber-600">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-            <line x1="12" y1="9" x2="12" y2="13"/>
-            <line x1="12" y1="17" x2="12.01" y2="17"/>
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
         </div>
         <h2 className="text-2xl font-bold text-neutral-900">Firebase Not Configured</h2>
@@ -2005,13 +2005,13 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     const dateObj = normalizeOrderDate(selectedOrder)
     const dateFormatted = dateObj && !isNaN(dateObj.getTime())
       ? dateObj.toLocaleString(undefined, {
-          weekday: 'short',
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
-        })
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
       : (selectedOrder.createdAt || '—')
 
     const cInfo = getOrderChannelInfo(selectedOrder)
@@ -2033,10 +2033,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       statusUpper === 'PAID'
         ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
         : statusUpper === 'REFUNDED'
-        ? 'bg-amber-50 text-amber-700 border-amber-200'
-        : statusUpper === 'VOIDED' || statusUpper === 'CANCELLED'
-        ? 'bg-red-50 text-red-700 border-red-200'
-        : 'bg-blue-50 text-blue-700 border-blue-200'
+          ? 'bg-amber-50 text-amber-700 border-amber-200'
+          : statusUpper === 'VOIDED' || statusUpper === 'CANCELLED'
+            ? 'bg-red-50 text-red-700 border-red-200'
+            : 'bg-blue-50 text-blue-700 border-blue-200'
 
     return (
       <div
@@ -2339,11 +2339,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                   key={tab.id}
                   type="button"
                   onClick={() => setReportType(tab.id)}
-                  className={`p-3 rounded-xl text-left border transition ${
-                    reportType === tab.id
-                      ? 'border-emerald-600 bg-emerald-50/60 shadow-2xs'
-                      : 'border-neutral-200 bg-white hover:bg-neutral-50/80 text-neutral-700'
-                  }`}
+                  className={`p-3 rounded-xl text-left border transition ${reportType === tab.id
+                    ? 'border-emerald-600 bg-emerald-50/60 shadow-2xs'
+                    : 'border-neutral-200 bg-white hover:bg-neutral-50/80 text-neutral-700'
+                    }`}
                 >
                   <p className={`text-xs font-bold ${reportType === tab.id ? 'text-emerald-800' : 'text-neutral-800'}`}>
                     {tab.label}
@@ -2374,11 +2373,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                       key={id}
                       type="button"
                       onClick={() => handleSelectFilterRange(id)}
-                      className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${
-                        filterRange === id
-                          ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
-                          : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
-                      }`}
+                      className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${filterRange === id
+                        ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
+                        : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
+                        }`}
                     >
                       {isCustom && (
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -2595,11 +2593,11 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
               >
                 <option value="all">All Channels</option>
                 <option value="TABLE">Dine-In Tables</option>
-                <option value="ROOM">Room Service</option>
+
                 <option value="UBER">Uber Eats</option>
                 <option value="PICKME">PickMe Food</option>
                 <option value="COUNTER">Counter / Walk-in</option>
-                <option value="SURFHOUSE">Surf House / Rentals</option>
+
                 <option value="ONLINE">Online / QR Orders</option>
               </select>
             </div>
@@ -3305,11 +3303,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                       setQuickCustomRange('today_full')
                     }
                   }}
-                  className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${
-                    detailedFilterRange === id
-                      ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
-                      : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
-                  }`}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${detailedFilterRange === id
+                    ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
+                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
+                    }`}
                 >
                   {isCustom && (
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -3616,11 +3613,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           <button
             type="button"
             onClick={() => setViewMode('dashboard')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              viewMode === 'dashboard'
-                ? 'bg-white text-emerald-800 shadow-xs'
-                : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
-            }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${viewMode === 'dashboard'
+              ? 'bg-white text-emerald-800 shadow-xs'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
+              }`}
           >
             <IconAnalytics />
             <span>Overview</span>
@@ -3628,11 +3624,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           <button
             type="button"
             onClick={() => setViewMode('reports')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              viewMode === 'reports'
-                ? 'bg-white text-emerald-800 shadow-xs'
-                : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
-            }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${viewMode === 'reports'
+              ? 'bg-white text-emerald-800 shadow-xs'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
+              }`}
           >
             <IconFileText />
             <span>Sales Reports</span>
@@ -3640,11 +3635,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           <button
             type="button"
             onClick={() => setViewMode('detailed-items')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              viewMode === 'detailed-items'
-                ? 'bg-white text-emerald-800 shadow-xs'
-                : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
-            }`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${viewMode === 'detailed-items'
+              ? 'bg-white text-emerald-800 shadow-xs'
+              : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
+              }`}
           >
             <span>Menu Items</span>
           </button>
@@ -3668,11 +3662,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
               key={id}
               type="button"
               onClick={() => handleSelectFilterRange(id)}
-              className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${
-                filterRange === id
-                  ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
-              }`}
+              className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${filterRange === id
+                ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
+                }`}
             >
               {isCustom && (
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -4235,11 +4228,11 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                     const date = new Date(order.createdAt)
                     const formattedDate = !isNaN(date.getTime())
                       ? date.toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
                       : '—'
                     const itemsCount = Array.isArray(order.items)
                       ? order.items.reduce((acc, item) => acc + (item.qty || 1), 0)
@@ -4278,11 +4271,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                         </td>
                         <td className="py-3">
                           <span
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                              order.paymentMethod === 'CARD'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-amber-50 text-amber-700 border border-amber-200'
-                            }`}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${order.paymentMethod === 'CARD'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-700 border border-amber-200'
+                              }`}
                           >
                             {order.paymentMethod || 'CASH'}
                           </span>
