@@ -10,6 +10,9 @@ import {
   saveDailySummary,
   fetchDailySummariesRange,
   normalizeOrderDate,
+  fetchOrdersWithIncrementalCache,
+  saveOrdersToCache,
+  getCacheSyncMeta,
 } from '../../lib/analyticsStorage'
 
 export const getOrderChannelInfo = (order) => {
@@ -127,6 +130,8 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
   const [copyStatus, setCopyStatus] = useState(false)
   const [tableCurrentPage, setTableCurrentPage] = useState(1)
   const [tablePageSize, setTablePageSize] = useState(50)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncMeta, setSyncMeta] = useState(null)
 
   // Reset pagination on filter or search changes
   useEffect(() => {
@@ -182,26 +187,41 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     }
   }
 
-  // Strategy 1: Server-side order fetch
-  const fetchBackupData = useCallback(async () => {
+  // Strategy 1: Local IndexedDB Caching with Incremental Server-Side Delta Fetch
+  const fetchBackupData = useCallback(async (forceRefresh = false) => {
     if (!isFirebaseConfigured || !db || !targetRestaurantId) {
       setLoading(false)
       return
     }
 
-    setLoading(true)
+    setIsSyncing(true)
+    // Only display full loading state if we don't have orders yet or user triggered force refresh
+    if (orders.length === 0 || forceRefresh) {
+      setLoading(true)
+    }
     setError(null)
 
     try {
-      const fetchedOrders = await fetchOrdersByDateRange(db, targetRestaurantId, null, null, 5000)
+      const fetchedOrders = await fetchOrdersWithIncrementalCache(db, targetRestaurantId, {
+        forceRefresh,
+        onInitialCachedLoaded: (cached) => {
+          if (cached && cached.length > 0) {
+            setOrders(cached)
+            setLoading(false) // Instant UI rendering from local IndexedDB!
+          }
+        },
+      })
       setOrders(fetchedOrders)
+      const meta = await getCacheSyncMeta(targetRestaurantId)
+      setSyncMeta(meta)
     } catch (err) {
       console.error('Error fetching backup database orders:', err)
       setError(err.message || 'Could not load analytics data.')
     } finally {
       setLoading(false)
+      setIsSyncing(false)
     }
-  }, [targetRestaurantId])
+  }, [targetRestaurantId, orders.length])
 
   useEffect(() => {
     fetchBackupData()
@@ -223,7 +243,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
         setOrders((prev) => {
           const map = new Map(prev.map((o) => [o.id, o]))
           todayOrders.forEach((o) => map.set(o.id, { ...map.get(o.id), ...o }))
-          return Array.from(map.values())
+          const merged = Array.from(map.values())
+          // Automatically persist live orders to IndexedDB cache
+          saveOrdersToCache(targetRestaurantId, todayOrders).catch(() => {})
+          return merged
         })
       },
       (err) => {
@@ -1980,9 +2003,29 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
               <span className="text-neutral-300">/</span>
               <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Reports & Exports</span>
             </div>
-            <h2 className="text-2xl font-bold tracking-tight text-neutral-900 flex items-center gap-2">
-              Sales & Financial Reports
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-2xl font-bold tracking-tight text-neutral-900">
+                Sales & Financial Reports
+              </h2>
+              {orders.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => fetchBackupData(true)}
+                  disabled={isSyncing}
+                  className="inline-flex items-center gap-1.5 text-[10px] font-medium text-neutral-600 hover:text-emerald-800 bg-white hover:bg-neutral-50 border border-neutral-200/80 rounded-full px-2 py-0.5 shadow-2xs transition disabled:opacity-50 cursor-pointer"
+                >
+                  <svg
+                    className={`w-2.5 h-2.5 ${isSyncing ? 'animate-spin text-emerald-600' : 'text-emerald-500'}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>{isSyncing ? 'Syncing...' : `Cached (${orders.length})`}</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* View Mode Switcher */}
@@ -2911,9 +2954,29 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
               <span className="text-neutral-300">/</span>
               <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Menu Items</span>
             </div>
-            <h2 className="text-2xl font-bold tracking-tight text-neutral-900 flex items-center gap-2">
-              Menu Items Analytics
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-2xl font-bold tracking-tight text-neutral-900">
+                Menu Items Analytics
+              </h2>
+              {orders.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => fetchBackupData(true)}
+                  disabled={isSyncing}
+                  className="inline-flex items-center gap-1.5 text-[10px] font-medium text-neutral-600 hover:text-emerald-800 bg-white hover:bg-neutral-50 border border-neutral-200/80 rounded-full px-2 py-0.5 shadow-2xs transition disabled:opacity-50 cursor-pointer"
+                >
+                  <svg
+                    className={`w-2.5 h-2.5 ${isSyncing ? 'animate-spin text-emerald-600' : 'text-emerald-500'}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span>{isSyncing ? 'Syncing...' : `Cached (${orders.length})`}</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
@@ -3239,7 +3302,27 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       {/* Header */}
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 border-b border-green-100/80 pb-4">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">POS Sales</p>
+          <div className="flex items-center gap-2">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">POS Sales</p>
+            {orders.length > 0 && (
+              <button
+                type="button"
+                onClick={() => fetchBackupData(true)}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1.5 text-[10px] font-medium text-neutral-600 hover:text-emerald-800 bg-white hover:bg-neutral-50 border border-neutral-200/80 rounded-full px-2 py-0.5 shadow-2xs transition disabled:opacity-50 cursor-pointer"
+              >
+                <svg
+                  className={`w-2.5 h-2.5 ${isSyncing ? 'animate-spin text-emerald-600' : 'text-emerald-500'}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>{isSyncing ? 'Syncing...' : `Cached (${orders.length})`}</span>
+              </button>
+            )}
+          </div>
           <div className="mt-0.5 flex items-center gap-2.5">
             <h2 className="text-2xl font-bold tracking-tight text-neutral-900">Restaurant Analytics</h2>
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/80 rounded-full px-2.5 py-0.5 shadow-2xs">
@@ -3249,80 +3332,80 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
-          {/* View Mode Switcher */}
-          <div className="inline-flex items-center p-1 bg-neutral-100/90 rounded-xl border border-neutral-200/60 shadow-2xs">
-            <button
-              type="button"
-              onClick={() => setViewMode('dashboard')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                viewMode === 'dashboard'
-                  ? 'bg-white text-emerald-800 shadow-xs'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <IconAnalytics />
-              <span>Overview</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('reports')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                viewMode === 'reports'
-                  ? 'bg-white text-emerald-800 shadow-xs'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <IconFileText />
-              <span>Sales Reports</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('detailed-items')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                viewMode === 'detailed-items'
-                  ? 'bg-white text-emerald-800 shadow-xs'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
-              }`}
-            >
-              <span>Menu Items</span>
-            </button>
-          </div>
+        {/* View Mode Switcher */}
+        <div className="inline-flex items-center p-1 bg-neutral-100/90 rounded-xl border border-neutral-200/60 shadow-2xs self-start xl:self-center">
+          <button
+            type="button"
+            onClick={() => setViewMode('dashboard')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              viewMode === 'dashboard'
+                ? 'bg-white text-emerald-800 shadow-xs'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
+            }`}
+          >
+            <IconAnalytics />
+            <span>Overview</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('reports')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              viewMode === 'reports'
+                ? 'bg-white text-emerald-800 shadow-xs'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
+            }`}
+          >
+            <IconFileText />
+            <span>Sales Reports</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('detailed-items')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              viewMode === 'detailed-items'
+                ? 'bg-white text-emerald-800 shadow-xs'
+                : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/40'
+            }`}
+          >
+            <span>Menu Items</span>
+          </button>
+        </div>
+      </div>
 
-          {/* Timeframe Compact Segmented Control */}
-          <div className="inline-flex items-center p-0.5 bg-neutral-100/90 rounded-lg border border-neutral-200/60 shadow-2xs">
-            {[
-              { id: 'today', label: 'Today' },
-              { id: '7d', label: '7 Days' },
-              { id: '30d', label: '30 Days' },
-              { id: '3m', label: '3 Months' },
-              { id: '6m', label: '6 Months' },
-              { id: '12m', label: '12 Months' },
-              { id: 'all', label: 'All' },
-              { id: 'custom', label: 'Custom', isCustom: true },
-            ].map(({ id, label, isCustom }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => handleSelectFilterRange(id)}
-                className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all ${
-                  filterRange === id
-                    ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
-                    : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
-                }`}
-              >
-                {isCustom && (
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                    <line x1="16" y1="2" x2="16" y2="6" />
-                    <line x1="8" y1="2" x2="8" y2="6" />
-                    <line x1="3" y1="10" x2="21" y2="10" />
-                  </svg>
-                )}
-                <span>{label}</span>
-              </button>
-            ))}
-          </div>
+      {/* Date Quick Select Component - Next row with right alignment (Overview tab only) */}
+      <div className="flex items-center justify-end w-full -mt-2">
+        <div className="inline-flex items-center p-0.5 bg-neutral-100/90 rounded-lg border border-neutral-200/60 shadow-2xs overflow-x-auto max-w-full">
+          {[
+            { id: 'today', label: 'Today' },
+            { id: '7d', label: '7 Days' },
+            { id: '30d', label: '30 Days' },
+            { id: '3m', label: '3 Months' },
+            { id: '6m', label: '6 Months' },
+            { id: '12m', label: '12 Months' },
+            { id: 'all', label: 'All' },
+            { id: 'custom', label: 'Custom', isCustom: true },
+          ].map(({ id, label, isCustom }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => handleSelectFilterRange(id)}
+              className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-all whitespace-nowrap ${
+                filterRange === id
+                  ? 'bg-emerald-600 text-white font-semibold shadow-2xs'
+                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-white/60'
+              }`}
+            >
+              {isCustom && (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+              )}
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
       </div>
 

@@ -350,3 +350,12 @@ export const fetchDailySummariesRange = async (db, targetRestaurantId, startDate
     return []
   }
 }
+
+export {
+  fetchOrdersWithIncrementalCache,
+  getCachedOrders,
+  saveOrdersToCache,
+  clearRestaurantOrdersCache,
+  getCacheSyncMeta,
+} from './ordersIdbCache'
+

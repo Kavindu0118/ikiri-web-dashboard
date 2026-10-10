@@ -1,5 +1,10 @@
 import { initializeApp, getApps } from 'firebase/app'
-import { getFirestore } from 'firebase/firestore'
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore'
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth'
 
 const firebaseConfig = {
@@ -21,7 +26,22 @@ const app = isFirebaseConfigured
   ? getApps()[0] ?? initializeApp(firebaseConfig)
   : null
 
-export const db = app ? getFirestore(app) : null
+export const db = app
+  ? (() => {
+      if (typeof window !== 'undefined' && typeof window.indexedDB !== 'undefined') {
+        try {
+          return initializeFirestore(app, {
+            localCache: persistentLocalCache({
+              tabManager: persistentMultipleTabManager(),
+            }),
+          })
+        } catch {
+          return getFirestore(app)
+        }
+      }
+      return getFirestore(app)
+    })()
+  : null
 export const auth = app ? getAuth(app) : null
 
 export const signInWithGoogle = async () => {
