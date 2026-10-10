@@ -182,14 +182,14 @@ export default function CancelledRefundedOrdersScreen({
   // Helper date boundary filter
   const isWithinDateFilter = useCallback(
     (recordDate) => {
-      if (!recordDate || !(recordDate instanceof Date) || isNaN(recordDate.getTime())) {
-        return true
-      }
+      if (!recordDate) return true
+      const dateObj = recordDate instanceof Date ? recordDate : new Date(recordDate)
+      if (isNaN(dateObj.getTime())) return true
       if (dateFilter === 'all') return true
 
       const { startDate, endDate } = getDateRangeBounds(dateFilter, customStart, customEnd)
-      if (startDate && recordDate < startDate) return false
-      if (endDate && recordDate > endDate) return false
+      if (startDate && dateObj < startDate) return false
+      if (endDate && dateObj > endDate) return false
       return true
     },
     [dateFilter, customStart, customEnd]
@@ -227,9 +227,11 @@ export default function CancelledRefundedOrdersScreen({
         voidLogsByTicket.get(`daily_${ticket.dailyNumber}`).forEach((l) => found.set(l.id, l))
       }
       return Array.from(found.values()).sort((a, b) => {
-        const timeA = a.date ? a.date.getTime() : 0
-        const timeB = b.date ? b.date.getTime() : 0
-        return timeB - timeA
+        const dateA = a.date || a.voidedAt || a.createdAt
+        const dateB = b.date || b.voidedAt || b.createdAt
+        const timeA = dateA instanceof Date ? dateA.getTime() : dateA ? new Date(dateA).getTime() : 0
+        const timeB = dateB instanceof Date ? dateB.getTime() : dateB ? new Date(dateB).getTime() : 0
+        return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA)
       })
     },
     [voidLogsByTicket]
@@ -239,9 +241,11 @@ export default function CancelledRefundedOrdersScreen({
   const allCombinedRecords = useMemo(() => {
     const list = [...openTickets, ...archivedOrders, ...voidLogs]
     return list.sort((a, b) => {
-      const timeA = a.date ? a.date.getTime() : 0
-      const timeB = b.date ? b.date.getTime() : 0
-      return timeB - timeA
+      const dateA = a.date || a.voidedAt || a.createdAt
+      const dateB = b.date || b.voidedAt || b.createdAt
+      const timeA = dateA instanceof Date ? dateA.getTime() : dateA ? new Date(dateA).getTime() : 0
+      const timeB = dateB instanceof Date ? dateB.getTime() : dateB ? new Date(dateB).getTime() : 0
+      return (isNaN(timeB) ? 0 : timeB) - (isNaN(timeA) ? 0 : timeA)
     })
   }, [openTickets, archivedOrders, voidLogs])
 
@@ -356,6 +360,7 @@ export default function CancelledRefundedOrdersScreen({
     let refundedAmount = 0
     let openCount = 0
     let openAmount = 0
+    let openItemsCount = 0
 
     allCombinedRecords.forEach((r) => {
       const matchesDate = r.status === 'OPEN' || isWithinDateFilter(r.date)
@@ -373,6 +378,12 @@ export default function CancelledRefundedOrdersScreen({
       } else if (r.status === 'OPEN') {
         openCount += 1
         openAmount += Number(r.total || 0)
+        const itemsQty = r.itemCount != null
+          ? Number(r.itemCount)
+          : (Array.isArray(r.items)
+            ? r.items.reduce((sum, item) => sum + (Number(item.qty || item.quantity) || 1), 0)
+            : 0)
+        openItemsCount += isNaN(itemsQty) ? 0 : itemsQty
       }
     })
 
@@ -385,6 +396,7 @@ export default function CancelledRefundedOrdersScreen({
       refundedAmount,
       openCount,
       openAmount,
+      openItemsCount,
       totalAuditRecords: voidedCount + itemVoidCount + refundedCount,
       totalAuditLoss: voidedAmount + itemVoidAmount + refundedAmount,
     }
@@ -443,18 +455,24 @@ export default function CancelledRefundedOrdersScreen({
 
   // Format Helper
   const formatTime = (d) => {
-    if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '—'
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (!d) return '—'
+    const dateObj = d instanceof Date ? d : new Date(d)
+    if (isNaN(dateObj.getTime())) return '—'
+    return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
   const formatDate = (d) => {
-    if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '—'
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+    if (!d) return '—'
+    const dateObj = d instanceof Date ? d : new Date(d)
+    if (isNaN(dateObj.getTime())) return '—'
+    return dateObj.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
   const getRelativeTime = (d) => {
-    if (!d || !(d instanceof Date) || isNaN(d.getTime())) return ''
-    const diffSec = Math.floor((Date.now() - d.getTime()) / 1000)
+    if (!d) return ''
+    const dateObj = d instanceof Date ? d : new Date(d)
+    if (isNaN(dateObj.getTime())) return ''
+    const diffSec = Math.floor((Date.now() - dateObj.getTime()) / 1000)
     if (diffSec < 60) return 'Just now'
     if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
     if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
@@ -737,11 +755,14 @@ export default function CancelledRefundedOrdersScreen({
               !
             </button>
           </div>
-          <div className="mt-2.5 flex items-baseline gap-2">
+          <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
             <span className="text-2xl font-extrabold text-blue-600">{stats.openCount}</span>
             <span className="text-xs text-neutral-400 font-medium">active</span>
+            <span className="inline-flex items-center text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-md">
+              {stats.openItemsCount} {stats.openItemsCount === 1 ? 'item' : 'items'}
+            </span>
             {occupiedTableCount > 0 && (
-              <span className="ml-auto text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md">
+              <span className="ml-auto text-xs font-semibold text-red-600">
                 {occupiedTableCount} table{occupiedTableCount > 1 ? 's' : ''} occupied
               </span>
             )}
@@ -998,8 +1019,8 @@ export default function CancelledRefundedOrdersScreen({
 
                         {/* Date & Time */}
                         <td className="py-3.5 px-4 text-neutral-600">
-                          <div className="font-semibold text-neutral-800">{formatDate(record.date)}</div>
-                          <div className="text-[10px] text-neutral-400">{formatTime(record.date)}</div>
+                          <div className="font-semibold text-neutral-800">{formatDate(record.date || record.voidedAt || record.createdAt)}</div>
+                          <div className="text-[10px] text-neutral-400">{formatTime(record.date || record.voidedAt || record.createdAt)}</div>
                         </td>
 
                         {/* Location */}
@@ -1387,7 +1408,7 @@ export default function CancelledRefundedOrdersScreen({
                       ? `${selectedRecord.tickets?.length || 0} Open ${
                           (selectedRecord.tickets?.length || 0) === 1 ? 'Ticket' : 'Tickets'
                         }`
-                      : `${formatDate(selectedRecord.date)} at ${formatTime(selectedRecord.date)}`}
+                      : `${formatDate(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)} at ${formatTime(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)}`}
                   </p>
                 </div>
               </div>
@@ -1593,6 +1614,12 @@ export default function CancelledRefundedOrdersScreen({
                         {selectedRecord.dailyNumber && <span>Sequence: #{selectedRecord.dailyNumber}</span>}
                       </div>
                     )}
+                    <div className="col-span-2 pt-1.5 border-t border-purple-100 flex items-center justify-between text-[11px] text-purple-800">
+                      <span className="text-purple-500 font-medium">Voided At</span>
+                      <span className="font-semibold">
+                        {formatDate(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)} at {formatTime(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Item Details Box */}
@@ -1733,7 +1760,7 @@ export default function CancelledRefundedOrdersScreen({
                                   Reason: {log.voidReason}
                                 </p>
                                 <span className="text-[10px] text-neutral-400">
-                                  {formatTime(log.date)}
+                                  {formatTime(log.date || log.voidedAt || log.createdAt)}
                                 </span>
                               </div>
                               <span className="font-mono font-semibold text-purple-700 whitespace-nowrap">

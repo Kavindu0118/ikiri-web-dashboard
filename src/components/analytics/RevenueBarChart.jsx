@@ -4,23 +4,38 @@ const pad = (n) => String(n).padStart(2, '0')
 
 const normalizeOrderDate = (order) => {
   if (!order) return null
-  const val =
-    order.createdAt ||
-    order.date ||
-    order.timestamp ||
-    order.updatedAt ||
-    order.backedUpAt ||
-    order.ticketCreatedAt
+
+  let val = order
+  if (
+    typeof order === 'object' &&
+    !(order instanceof Date) &&
+    typeof order.toDate !== 'function' &&
+    typeof order.seconds !== 'number' &&
+    typeof order._seconds !== 'number'
+  ) {
+    val =
+      order.voidedAt ||
+      order.backedUpAt ||
+      order.createdAt ||
+      order.date ||
+      order.timestamp ||
+      order.updatedAt ||
+      order.ticketCreatedAt
+  }
   if (!val) return null
 
   if (typeof val === 'object' && typeof val.toDate === 'function') {
     return val.toDate()
   }
-  if (typeof val === 'object' && typeof val.seconds === 'number') {
-    return new Date(val.seconds * 1000)
+  if (
+    typeof val === 'object' &&
+    (typeof val.seconds === 'number' || typeof val._seconds === 'number')
+  ) {
+    const sec = val.seconds ?? val._seconds
+    return new Date(sec * 1000)
   }
   if (val instanceof Date) {
-    return val
+    return isNaN(val.getTime()) ? null : val
   }
   if (typeof val === 'string') {
     const cleanStr = val.includes(' ') && !val.includes('T') ? val.replace(' ', 'T') : val

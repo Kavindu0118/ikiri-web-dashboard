@@ -377,9 +377,13 @@ export const normalizeVoidLog = (docData, fallbackId = '') => {
     fallbackId ??
     `void_log_${Math.random().toString(36).slice(2, 8)}`
 
-  const rawDate = normalizeOrderDate(
-    docData.voidedAt || docData.createdAt || docData.timestamp || docData.date
-  )
+  const rawDate =
+    normalizeOrderDate(docData.voidedAt) ||
+    normalizeOrderDate(docData.backedUpAt) ||
+    normalizeOrderDate(docData.createdAt) ||
+    normalizeOrderDate(docData.timestamp) ||
+    normalizeOrderDate(docData.date) ||
+    normalizeOrderDate(docData)
 
   const qtyVoided = Number(docData.qtyVoided ?? docData.quantityVoided ?? docData.qty ?? 1) || 1
   const unitPrice = Number(docData.unitPrice ?? docData.price ?? 0) || 0
