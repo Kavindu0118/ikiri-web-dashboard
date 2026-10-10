@@ -227,7 +227,20 @@ export default function CancelledRefundedOrdersScreen({
         voidLogsByTicket.get(String(ticket.ticketId)).forEach((l) => found.set(l.id, l))
       }
       if (ticket.dailyNumber && voidLogsByTicket.has(`daily_${ticket.dailyNumber}`)) {
-        voidLogsByTicket.get(`daily_${ticket.dailyNumber}`).forEach((l) => found.set(l.id, l))
+        voidLogsByTicket.get(`daily_${ticket.dailyNumber}`).forEach((l) => {
+          // Prevent cross-day collisions on daily sequence numbers: verify same date
+          const ticketDate = ticket.date || ticket.createdAt
+          const logDate = l.date || l.voidedAt || l.createdAt
+          if (ticketDate && logDate) {
+            const ticketDateStr = (ticketDate instanceof Date ? ticketDate : new Date(ticketDate)).toDateString()
+            const logDateStr = (logDate instanceof Date ? logDate : new Date(logDate)).toDateString()
+            if (ticketDateStr === logDateStr) {
+              found.set(l.id, l)
+            }
+          } else {
+            found.set(l.id, l)
+          }
+        })
       }
       return Array.from(found.values()).sort((a, b) => {
         const dateA = a.date || a.voidedAt || a.createdAt
@@ -508,6 +521,26 @@ export default function CancelledRefundedOrdersScreen({
       return 'PickMe Food'
     }
     return r.source || 'Counter'
+  }
+
+  const getOrderSourceText = (r) => {
+    if (!r) return 'Counter'
+    const raw = r.source || r.orderSource || r.orderType || ''
+    const s = String(raw).toUpperCase().trim()
+    if (s === 'WAITER') return 'Waiter'
+    if (s === 'QR' || s === 'TABLE_QR') return 'QR Order'
+    if (s === 'ONLINE' || s === 'WEB') return 'Online'
+    if (s === 'UBER' || s === 'UBEREATS' || s === 'UBER_EATS') return 'Uber Eats'
+    if (s === 'PICKME' || s === 'PICK_ME' || s === 'PICKMEFOOD') return 'PickMe Food'
+    if (s === 'SURFHOUSE' || s === 'SURF_HOUSE' || s === 'RENTAL') return 'Surf House'
+    if (s === 'ROOM') return 'Room Service'
+    if (s === 'TABLE' || s === 'DINE_IN' || s === 'DINEIN') return 'Dine-in'
+    if (s === 'COUNTER' || s === 'POS' || s === 'WALK_IN' || s === 'WALKIN') return 'Counter'
+    if (s === 'TAKEAWAY' || s === 'TAKE_AWAY') return 'Takeaway'
+    if (raw) return String(raw)
+    if (r.tableNumber) return 'Dine-in'
+    if (r.roomNumber) return 'Room Service'
+    return 'Counter'
   }
 
   return (
@@ -1324,9 +1357,12 @@ export default function CancelledRefundedOrdersScreen({
                           </span>
                           <span className="h-2 w-2 rounded-full bg-red-600 animate-pulse"></span>
                         </div>
-                        <div className="my-1">
+                        <div className="my-1 flex items-center gap-1.5 flex-wrap">
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-600 text-white">
                             {ticket.displayId}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-800">
+                            {getOrderSourceText(ticket)}
                           </span>
                         </div>
                         <div className="pt-1.5 border-t border-red-200/80 flex items-center justify-end">
@@ -1382,11 +1418,17 @@ export default function CancelledRefundedOrdersScreen({
                         ? `Item Void — Ticket ${selectedRecord.displayId}`
                         : `Order ${selectedRecord.displayId}`}
                   </h3>
-                  <p className="text-[11px] text-neutral-500">
-                    {selectedRecord.isTableGroup
-                      ? `${selectedRecord.tickets?.length || 0} Open ${(selectedRecord.tickets?.length || 0) === 1 ? 'Ticket' : 'Tickets'
-                      }`
-                      : `${formatDate(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)} at ${formatTime(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)}`}
+                  <p className="text-[11px] text-neutral-500 flex items-center gap-1.5 flex-wrap">
+                    <span>
+                      {selectedRecord.isTableGroup
+                        ? `${selectedRecord.tickets?.length || 0} Open ${(selectedRecord.tickets?.length || 0) === 1 ? 'Ticket' : 'Tickets'}`
+                        : `${formatDate(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)} at ${formatTime(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)}`}
+                    </span>
+                    {!selectedRecord.isTableGroup && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-neutral-200/80 text-neutral-700">
+                        {getOrderSourceText(selectedRecord)}
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -1450,9 +1492,12 @@ export default function CancelledRefundedOrdersScreen({
                       >
                         {/* Ticket header */}
                         <div className="flex items-center justify-between pb-2 border-b border-neutral-200/60">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-neutral-900 text-white font-mono">
                               {ticket.displayId}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-neutral-200/90 text-neutral-800 border border-neutral-300/60">
+                              Source: {getOrderSourceText(ticket)}
                             </span>
                             <span className="text-[11px] text-neutral-500">
                               {formatDate(ticket.date)} at {formatTime(ticket.date)}
@@ -1573,11 +1618,17 @@ export default function CancelledRefundedOrdersScreen({
                 // ── DEDICATED ITEM VOID AUDIT MODAL ──
                 <div className="space-y-4">
                   {/* Meta Info */}
-                  <div className="grid grid-cols-2 gap-2.5 p-3 bg-purple-50/70 rounded-xl border border-purple-200 text-[11px]">
+                  <div className="grid grid-cols-3 gap-2.5 p-3 bg-purple-50/70 rounded-xl border border-purple-200 text-[11px]">
                     <div>
                       <span className="text-purple-400 block">Location</span>
                       <span className="font-bold text-purple-900">
                         {getOrderLocationText(selectedRecord)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-purple-400 block">Source</span>
+                      <span className="font-bold text-purple-900">
+                        {getOrderSourceText(selectedRecord)}
                       </span>
                     </div>
                     <div>
@@ -1650,11 +1701,17 @@ export default function CancelledRefundedOrdersScreen({
                 // ── STANDARD ORDER / TICKET VIEW ──
                 <>
                   {/* Meta info */}
-                  <div className="grid grid-cols-2 gap-2.5 p-3 bg-neutral-50 rounded-xl border border-neutral-100 text-[11px]">
+                  <div className="grid grid-cols-3 gap-2.5 p-3 bg-neutral-50 rounded-xl border border-neutral-100 text-[11px]">
                     <div>
                       <span className="text-neutral-400 block">Location</span>
                       <span className="font-bold text-neutral-800">
                         {getOrderLocationText(selectedRecord)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-neutral-400 block">Source</span>
+                      <span className="font-bold text-neutral-800">
+                        {getOrderSourceText(selectedRecord)}
                       </span>
                     </div>
                     <div>
