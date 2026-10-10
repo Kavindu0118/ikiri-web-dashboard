@@ -552,3 +552,19 @@ export const deleteWaiterCode = async (restaurantId, code) => {
   }
 }
 
+export const validateWaiterCode = async (restaurantId, code) => {
+  if (!isFirebaseConfigured || !db || !restaurantId || !code) return false
+  try {
+    const docRef = doc(db, 'waiterCodes', restaurantId)
+    const snap = await getDoc(docRef)
+    if (!snap.exists()) return false
+    const data = snap.data() || {}
+    const searchCode = String(code).trim().toLowerCase()
+    return Object.keys(data).some((k) => k.trim().toLowerCase() === searchCode)
+  } catch (error) {
+    console.error("Error validating waiter code:", error)
+    return false
+  }
+}
+
+

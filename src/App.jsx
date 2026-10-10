@@ -35,6 +35,7 @@ import {
   getWaiterCodes,
   addWaiterCode,
   deleteWaiterCode,
+  validateWaiterCode,
 } from './lib/menuStorage'
 
 import { uploadMenuItemImage, isSupabaseConfigured } from './lib/supabase'
@@ -2710,18 +2711,76 @@ const getCurrencySymbol = (priceStr) => {
   return match ? match[1] : '$'
 }
 
+const getTodayDateString = () => {
+  const d = new Date()
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getWaiterStorageKey = (restaurantId, code) => {
+  return `waiter_val_${restaurantId}_${code}`
+}
+
+const checkCachedWaiterValidation = (restaurantId, code) => {
+  if (!restaurantId || !code || typeof window === 'undefined') return false
+  const today = getTodayDateString()
+  try {
+    const raw = window.localStorage.getItem(getWaiterStorageKey(restaurantId, code))
+      || window.localStorage.getItem(`waiter_val_${restaurantId}_${String(code).trim().toLowerCase()}`)
+    if (!raw) return false
+    const parsed = JSON.parse(raw)
+    return parsed?.date === today && parsed?.valid === true
+  } catch {
+    return false
+  }
+}
+
+const saveCachedWaiterValidation = (restaurantId, code) => {
+  if (!restaurantId || !code || typeof window === 'undefined') return
+  const today = getTodayDateString()
+  try {
+    const key = getWaiterStorageKey(restaurantId, code)
+    window.localStorage.setItem(key, JSON.stringify({ date: today, valid: true }))
+  } catch (e) {
+    console.warn('Failed to save waiter validation in localStorage:', e)
+  }
+}
+
+const clearCachedWaiterValidation = (restaurantId, code) => {
+  if (typeof window === 'undefined') return
+  try {
+    if (restaurantId && code) {
+      window.localStorage.removeItem(getWaiterStorageKey(restaurantId, code))
+      window.localStorage.removeItem(`waiter_val_${restaurantId}_${String(code).trim().toLowerCase()}`)
+    }
+  } catch (e) {
+    console.warn('Failed to clear waiter validation cache:', e)
+  }
+}
+
 // ─── MenuViewer ───────────────────────────────────────────────────────────────
 function MenuViewer() {
   const { id, tableNo } = useParams()
   const [searchParams] = useSearchParams()
   const roomKeyParam = searchParams.get('rk') || (tableNo && tableNo.startsWith('room-') ? tableNo.replace('room-', '') : null)
   const waiterParam = searchParams.get('waiter') || searchParams.get('waiterCode') || (tableNo && tableNo.startsWith('waiter-') ? tableNo.replace('waiter-', '') : null)
-  const isWaiterMode = Boolean(waiterParam)
   const waiterName = waiterParam ? decodeURIComponent(waiterParam).trim() : ''
 
+  const initialCachedMenu = useMemo(() => getCachedMenuRecord(id), [id])
+  const initialIsVerifiedToday = useMemo(() => {
+    if (!waiterParam || !initialCachedMenu?.restaurantId) return false
+    return checkCachedWaiterValidation(initialCachedMenu.restaurantId, waiterName)
+  }, [waiterParam, initialCachedMenu?.restaurantId, waiterName])
+
+  const [isWaiterMode, setIsWaiterMode] = useState(() => Boolean(waiterParam && (!initialCachedMenu?.restaurantId || initialIsVerifiedToday)))
+  const [waiterAccessDenied, setWaiterAccessDenied] = useState(false)
+  const [isValidatingWaiter, setIsValidatingWaiter] = useState(false)
+
   const [selectedWaiterTable, setSelectedWaiterTable] = useState(null)
-  const [menuData, setMenuData] = useState(() => getCachedMenuRecord(id))
-  const [loading, setLoading] = useState(() => !getCachedMenuRecord(id))
+  const [menuData, setMenuData] = useState(() => initialCachedMenu)
+  const [loading, setLoading] = useState(() => !initialCachedMenu)
   const [isRefreshingMenu, setIsRefreshingMenu] = useState(false)
   const [restaurantSettings, setRestaurantSettings] = useState(null)
   const [cartItems, setCartItems] = useState([])
@@ -2738,6 +2797,65 @@ function MenuViewer() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [deviceId] = useState(() => getDeviceId())
   const [showCartDrawer, setShowCartDrawer] = useState(false)
+
+  // Verify waiter link against Firestore (loads menu from cache, only checks waiter code validation)
+  const verifyWaiter = useCallback(async (targetRestaurantId = menuData?.restaurantId) => {
+    if (!waiterParam || !waiterName || !id) return false
+    setIsValidatingWaiter(true)
+    try {
+      let rId = targetRestaurantId || menuData?.restaurantId
+      if (!rId) {
+        const menu = await getMenuRecord(id)
+        if (menu) {
+          setMenuData(menu)
+          rId = menu.restaurantId
+        }
+      }
+      if (!rId) return false
+
+      // Call Firestore to verify if the waiter code is still active
+      const isValid = await validateWaiterCode(rId, waiterName)
+      if (isValid) {
+        saveCachedWaiterValidation(rId, waiterName)
+        setIsWaiterMode(true)
+        setWaiterAccessDenied(false)
+        return true
+      } else {
+        clearCachedWaiterValidation(rId, waiterName)
+        setIsWaiterMode(false)
+        setWaiterAccessDenied(true)
+        alert("Access Denied: This waiter code is invalid or has been revoked by the manager.")
+        return false
+      }
+    } catch (err) {
+      console.error('Error verifying waiter code:', err)
+      return false
+    } finally {
+      setIsValidatingWaiter(false)
+    }
+  }, [waiterParam, waiterName, id, menuData?.restaurantId])
+
+  // Overnight Tab Protection: visibilitychange listener watches for wake up or tab switch past midnight
+  useEffect(() => {
+    if (!waiterParam || !waiterName || waiterAccessDenied) return
+
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible') {
+        const rId = menuData?.restaurantId
+        if (!rId) return
+        const isStillValidToday = checkCachedWaiterValidation(rId, waiterName)
+        if (!isStillValidToday) {
+          // Date has rolled over past midnight: trigger verification check
+          await verifyWaiter(rId)
+        }
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [waiterParam, waiterName, waiterAccessDenied, menuData?.restaurantId, verifyWaiter])
 
   // Resolve room or table location
   const activeLocation = useMemo(() => {
@@ -2873,6 +2991,9 @@ function MenuViewer() {
       if (freshData) {
         setMenuData(freshData)
       }
+      if (isWaiterMode && waiterName && freshData?.restaurantId) {
+        await verifyWaiter(freshData.restaurantId)
+      }
     } catch (err) {
       console.warn('Failed to refresh menu:', err)
     } finally {
@@ -2882,16 +3003,37 @@ function MenuViewer() {
 
   useEffect(() => {
     async function load() {
-      if (id) {
-        const data = await getMenuRecord(id)
-        if (data) {
-          setMenuData(data)
-        }
+      if (!id) {
+        setLoading(false)
+        return
+      }
+
+      // Always load menu from cache first; only fetch from Firestore if cache is empty
+      const cachedMenu = getCachedMenuRecord(id)
+      let currentMenu = cachedMenu
+      if (cachedMenu) {
+        setMenuData(cachedMenu)
+      } else {
+        currentMenu = await getMenuRecord(id)
+        if (currentMenu) setMenuData(currentMenu)
       }
       setLoading(false)
+
+      if (waiterParam && waiterName) {
+        const restId = currentMenu?.restaurantId
+        const verifiedToday = restId ? checkCachedWaiterValidation(restId, waiterName) : false
+
+        if (verifiedToday) {
+          // Same day: already verified for today, 0 extra Firestore reads
+          setIsWaiterMode(true)
+        } else {
+          // New day or first load: verify waiter link with Firestore
+          await verifyWaiter(restId)
+        }
+      }
     }
     load()
-  }, [id])
+  }, [id, waiterParam, waiterName, verifyWaiter])
 
   useEffect(() => {
     if (!menuData?.restaurantId) return
@@ -3022,6 +3164,25 @@ function MenuViewer() {
 
   const placeOrder = async () => {
     if (!menuData?.restaurantId || (!allowOnlineOrders && !isWaiterMode)) return
+
+    if (isWaiterMode) {
+      // Order Placement Guard: confirm waiter authorization is valid for today before creating the Firestore order document
+      let isAuthorized = checkCachedWaiterValidation(menuData.restaurantId, waiterName)
+      if (!isAuthorized) {
+        const isStillValid = await validateWaiterCode(menuData.restaurantId, waiterName)
+        if (isStillValid) {
+          saveCachedWaiterValidation(menuData.restaurantId, waiterName)
+          isAuthorized = true
+        } else {
+          clearCachedWaiterValidation(menuData.restaurantId, waiterName)
+          setIsWaiterMode(false)
+          setWaiterAccessDenied(true)
+          setIsPlacingOrder(false)
+          alert("Access Denied: This waiter code is invalid or has been revoked by the manager.")
+          return
+        }
+      }
+    }
 
     if (!isWaiterMode && !customerName.trim()) {
       setOrderError('Please add your name before placing the order.')
@@ -3171,7 +3332,59 @@ function MenuViewer() {
     setIsCancelling(false)
   }
 
-  if (loading) return <div className="p-10 text-center text-neutral-600">Loading menu…</div>
+  if (waiterAccessDenied) {
+    return (
+      <div className="min-h-screen bg-neutral-900 text-white flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-neutral-800/95 border border-red-900/40 rounded-3xl p-8 text-center shadow-2xl backdrop-blur-xl">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 mb-6 shadow-inner">
+            <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest text-red-400 bg-red-950/60 rounded-full border border-red-800/50 mb-3">
+            Access Denied
+          </span>
+          <h2 className="text-2xl font-bold tracking-tight text-white mb-2">
+            Waiter Access Locked
+          </h2>
+          <p className="text-sm text-neutral-300 leading-relaxed mb-6">
+            This waiter code is invalid or has been revoked by the manager.
+          </p>
+          <div className="bg-neutral-900/90 rounded-2xl p-4 border border-neutral-800 text-left mb-6 space-y-2">
+            <div className="flex justify-between text-xs">
+              <span className="text-neutral-400">Attempted Code:</span>
+              <span className="font-mono font-semibold text-neutral-200">{waiterName || waiterParam}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-neutral-400">Authorization Status:</span>
+              <span className="font-semibold text-red-400">Revoked / Expired</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-neutral-400">Menu & Ordering:</span>
+              <span className="font-semibold text-neutral-400">Inaccessible</span>
+            </div>
+          </div>
+          <p className="text-xs text-neutral-500">
+            Please ask your manager to generate a new active waiter QR or link.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!menuData && (loading || isValidatingWaiter)) {
+    return (
+      <div className="min-h-screen bg-neutral-900 flex flex-col items-center justify-center p-6 text-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-green-500 border-t-transparent"></div>
+          <p className="text-sm font-medium text-neutral-300">
+            {waiterParam ? 'Verifying waiter access…' : 'Loading menu…'}
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (!menuData) return <div className="p-10 text-center text-red-600">Menu not found or could not be loaded.</div>
 
   const currencySymbol = restaurantSettings?.currency === 'LKR' ? 'Rs. ' : '$'
