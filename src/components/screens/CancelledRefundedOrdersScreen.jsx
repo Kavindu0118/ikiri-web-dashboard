@@ -29,7 +29,10 @@ export default function CancelledRefundedOrdersScreen({
 }) {
   const targetRestaurantId =
     propRestaurantId || profile?.restaurantId || profile?.id || null
-  const currencySymbol = restaurantSettings?.currency || '$'
+  const currencySymbol =
+    restaurantSettings?.currency === 'LKR'
+      ? 'Rs. '
+      : (restaurantSettings?.currency || '$')
 
   // Data states
   const [archivedOrders, setArchivedOrders] = useState([])
@@ -425,8 +428,8 @@ export default function CancelledRefundedOrdersScreen({
       const amountVal = r.isVoidLog
         ? `-${(r.totalAmount || r.total || 0).toFixed(2)}`
         : r.status === 'REFUNDED'
-        ? `-${(r.total || 0).toFixed(2)}`
-        : (r.total || 0).toFixed(2)
+          ? `-${(r.total || 0).toFixed(2)}`
+          : (r.total || 0).toFixed(2)
 
       return [
         `"${r.id}"`,
@@ -570,17 +573,15 @@ export default function CancelledRefundedOrdersScreen({
         {/* Card 1: Voided Orders (Click to filter) */}
         <div
           onClick={() => setFilterType((prev) => (prev === 'voided' ? 'all' : 'voided'))}
-          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${
-            filterType === 'voided'
+          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${filterType === 'voided'
               ? 'border-red-500 ring-2 ring-red-500/20 bg-red-50/25'
               : 'border-red-100 hover:border-red-300'
-          }`}
+            }`}
           title="Click to filter voided tickets"
         >
           <div className="flex items-center justify-between">
-            <span className={`text-xs font-bold uppercase tracking-wider transition ${
-              filterType === 'voided' ? 'text-red-700' : 'text-neutral-500'
-            }`}>
+            <span className={`text-xs font-bold uppercase tracking-wider transition ${filterType === 'voided' ? 'text-red-700' : 'text-neutral-500'
+              }`}>
               Voided Tickets
             </span>
             <button
@@ -590,11 +591,10 @@ export default function CancelledRefundedOrdersScreen({
                 toggleCardInfo('voided')
               }}
               title="Click for info"
-              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
-                expandedInfoCard === 'voided'
+              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${expandedInfoCard === 'voided'
                   ? 'bg-red-600 text-white'
                   : 'bg-red-50 text-red-600 hover:bg-red-100'
-              }`}
+                }`}
             >
               !
             </button>
@@ -624,17 +624,15 @@ export default function CancelledRefundedOrdersScreen({
         {/* Card 2: Item Voids / Reductions (Click to filter) */}
         <div
           onClick={() => setFilterType((prev) => (prev === 'item_voids' ? 'all' : 'item_voids'))}
-          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${
-            filterType === 'item_voids'
+          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${filterType === 'item_voids'
               ? 'border-purple-500 ring-2 ring-purple-500/20 bg-purple-50/25'
               : 'border-purple-100 hover:border-purple-300'
-          }`}
+            }`}
           title="Click to filter item voids"
         >
           <div className="flex items-center justify-between">
-            <span className={`text-xs font-bold uppercase tracking-wider transition ${
-              filterType === 'item_voids' ? 'text-purple-700' : 'text-neutral-500'
-            }`}>
+            <span className={`text-xs font-bold uppercase tracking-wider transition ${filterType === 'item_voids' ? 'text-purple-700' : 'text-neutral-500'
+              }`}>
               Item Voids
             </span>
             <button
@@ -644,11 +642,10 @@ export default function CancelledRefundedOrdersScreen({
                 toggleCardInfo('item_voids')
               }}
               title="Click for info"
-              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
-                expandedInfoCard === 'item_voids'
+              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${expandedInfoCard === 'item_voids'
                   ? 'bg-purple-600 text-white'
                   : 'bg-purple-50 text-purple-600 hover:bg-purple-100'
-              }`}
+                }`}
             >
               !
             </button>
@@ -678,17 +675,15 @@ export default function CancelledRefundedOrdersScreen({
         {/* Card 3: Refunded Orders (Click to filter) */}
         <div
           onClick={() => setFilterType((prev) => (prev === 'refunded' ? 'all' : 'refunded'))}
-          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${
-            filterType === 'refunded'
+          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-xs transition relative cursor-pointer ${filterType === 'refunded'
               ? 'border-amber-500 ring-2 ring-amber-500/20 bg-amber-50/25'
               : 'border-amber-100 hover:border-amber-300'
-          }`}
+            }`}
           title="Click to filter refunded orders"
         >
           <div className="flex items-center justify-between">
-            <span className={`text-xs font-bold uppercase tracking-wider transition ${
-              filterType === 'refunded' ? 'text-amber-700' : 'text-neutral-500'
-            }`}>
+            <span className={`text-xs font-bold uppercase tracking-wider transition ${filterType === 'refunded' ? 'text-amber-700' : 'text-neutral-500'
+              }`}>
               Refunded Orders
             </span>
             <button
@@ -698,11 +693,10 @@ export default function CancelledRefundedOrdersScreen({
                 toggleCardInfo('refunded')
               }}
               title="Click for info"
-              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
-                expandedInfoCard === 'refunded'
+              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${expandedInfoCard === 'refunded'
                   ? 'bg-amber-600 text-white'
                   : 'bg-amber-50 text-amber-600 hover:bg-amber-100'
-              }`}
+                }`}
             >
               !
             </button>
@@ -746,11 +740,10 @@ export default function CancelledRefundedOrdersScreen({
                 toggleCardInfo('open')
               }}
               title="Click for info"
-              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${
-                expandedInfoCard === 'open'
+              className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${expandedInfoCard === 'open'
                   ? 'bg-blue-600 text-white'
                   : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
-              }`}
+                }`}
             >
               !
             </button>
@@ -794,75 +787,66 @@ export default function CancelledRefundedOrdersScreen({
             <button
               type="button"
               onClick={() => setFilterType('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                filterType === 'all'
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${filterType === 'all'
                   ? 'bg-white text-neutral-900 shadow-xs'
                   : 'text-neutral-600 hover:text-neutral-900'
-              }`}
+                }`}
             >
               All ({allCombinedRecords.length})
             </button>
             <button
               type="button"
               onClick={() => setFilterType('voided')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                filterType === 'voided'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${filterType === 'voided'
                   ? 'bg-red-600 text-white shadow-xs'
                   : 'text-neutral-600 hover:text-neutral-900'
-              }`}
+                }`}
             >
               <span>Voided Tickets</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                filterType === 'voided' ? 'bg-red-700 text-white' : 'bg-neutral-200 text-neutral-700'
-              }`}>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${filterType === 'voided' ? 'bg-red-700 text-white' : 'bg-neutral-200 text-neutral-700'
+                }`}>
                 {stats.voidedCount}
               </span>
             </button>
             <button
               type="button"
               onClick={() => setFilterType('item_voids')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                filterType === 'item_voids'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${filterType === 'item_voids'
                   ? 'bg-purple-600 text-white shadow-xs'
                   : 'text-neutral-600 hover:text-neutral-900'
-              }`}
+                }`}
             >
               <span>Item Voids</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                filterType === 'item_voids' ? 'bg-purple-700 text-white' : 'bg-neutral-200 text-neutral-700'
-              }`}>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${filterType === 'item_voids' ? 'bg-purple-700 text-white' : 'bg-neutral-200 text-neutral-700'
+                }`}>
                 {stats.itemVoidCount}
               </span>
             </button>
             <button
               type="button"
               onClick={() => setFilterType('refunded')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                filterType === 'refunded'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${filterType === 'refunded'
                   ? 'bg-amber-600 text-white shadow-xs'
                   : 'text-neutral-600 hover:text-neutral-900'
-              }`}
+                }`}
             >
               <span>Refunded</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                filterType === 'refunded' ? 'bg-amber-700 text-white' : 'bg-neutral-200 text-neutral-700'
-              }`}>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${filterType === 'refunded' ? 'bg-amber-700 text-white' : 'bg-neutral-200 text-neutral-700'
+                }`}>
                 {stats.refundedCount}
               </span>
             </button>
             <button
               type="button"
               onClick={() => setFilterType('open')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                filterType === 'open'
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition ${filterType === 'open'
                   ? 'bg-blue-600 text-white shadow-xs'
                   : 'text-neutral-600 hover:text-neutral-900'
-              }`}
+                }`}
             >
               <span>Open Tickets</span>
-              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                filterType === 'open' ? 'bg-blue-700 text-white' : 'bg-neutral-200 text-neutral-700'
-              }`}>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${filterType === 'open' ? 'bg-blue-700 text-white' : 'bg-neutral-200 text-neutral-700'
+                }`}>
                 {stats.openCount}
               </span>
             </button>
@@ -982,9 +966,8 @@ export default function CancelledRefundedOrdersScreen({
                         {/* Ticket # */}
                         <td className="py-3.5 px-4 font-mono font-bold text-neutral-900">
                           <span>{record.displayId || `#${record.id.slice(0, 8)}`}</span>
-                          <span className={`text-[10px] font-sans block ${
-                            isVoidLog ? 'text-purple-600 font-semibold' : 'text-neutral-400 font-normal'
-                          }`}>
+                          <span className={`text-[10px] font-sans block ${isVoidLog ? 'text-purple-600 font-semibold' : 'text-neutral-400 font-normal'
+                            }`}>
                             {isVoidLog ? 'Item Reduction' : getRelativeTime(record.date)}
                           </span>
                         </td>
@@ -1167,11 +1150,10 @@ export default function CancelledRefundedOrdersScreen({
                             <button
                               type="button"
                               onClick={() => setCurrentPage(page)}
-                              className={`h-7 w-7 rounded-lg text-xs font-bold transition ${
-                                safeCurrentPage === page
+                              className={`h-7 w-7 rounded-lg text-xs font-bold transition ${safeCurrentPage === page
                                   ? 'bg-neutral-900 text-white'
                                   : 'bg-white border border-neutral-200 text-neutral-700 hover:bg-neutral-50'
-                              }`}
+                                }`}
                             >
                               {page}
                             </button>
@@ -1216,22 +1198,20 @@ export default function CancelledRefundedOrdersScreen({
                   <button
                     type="button"
                     onClick={() => setTableModalFilter('all')}
-                    className={`px-3 py-1 rounded-lg transition ${
-                      tableModalFilter === 'all'
+                    className={`px-3 py-1 rounded-lg transition ${tableModalFilter === 'all'
                         ? 'bg-white text-neutral-900 shadow-xs'
                         : 'text-neutral-600 hover:text-neutral-900'
-                    }`}
+                      }`}
                   >
                     All ({totalTables})
                   </button>
                   <button
                     type="button"
                     onClick={() => setTableModalFilter('occupied')}
-                    className={`px-3 py-1 rounded-lg transition ${
-                      tableModalFilter === 'occupied'
+                    className={`px-3 py-1 rounded-lg transition ${tableModalFilter === 'occupied'
                         ? 'bg-red-600 text-white shadow-xs'
                         : 'text-neutral-600 hover:text-neutral-900'
-                    }`}
+                      }`}
                   >
                     Occupied ({occupiedTableCount})
                   </button>
@@ -1383,15 +1363,14 @@ export default function CancelledRefundedOrdersScreen({
             <div className="p-4 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/80">
               <div className="flex items-center gap-2.5">
                 <div
-                  className={`p-2 rounded-xl text-white ${
-                    selectedRecord.isVoidLog || selectedRecord.status === 'ITEM_VOID'
+                  className={`p-2 rounded-xl text-white ${selectedRecord.isVoidLog || selectedRecord.status === 'ITEM_VOID'
                       ? 'bg-purple-600'
                       : selectedRecord.status === 'VOIDED'
-                      ? 'bg-red-600'
-                      : selectedRecord.status === 'REFUNDED'
-                      ? 'bg-amber-600'
-                      : 'bg-blue-600'
-                  }`}
+                        ? 'bg-red-600'
+                        : selectedRecord.status === 'REFUNDED'
+                          ? 'bg-amber-600'
+                          : 'bg-blue-600'
+                    }`}
                 >
                   <IconReceiptAudit />
                 </div>
@@ -1400,14 +1379,13 @@ export default function CancelledRefundedOrdersScreen({
                     {selectedRecord.isTableGroup
                       ? `Table #${selectedRecord.tableNumber}`
                       : selectedRecord.isVoidLog || selectedRecord.status === 'ITEM_VOID'
-                      ? `Item Void — Ticket ${selectedRecord.displayId}`
-                      : `Order ${selectedRecord.displayId}`}
+                        ? `Item Void — Ticket ${selectedRecord.displayId}`
+                        : `Order ${selectedRecord.displayId}`}
                   </h3>
                   <p className="text-[11px] text-neutral-500">
                     {selectedRecord.isTableGroup
-                      ? `${selectedRecord.tickets?.length || 0} Open ${
-                          (selectedRecord.tickets?.length || 0) === 1 ? 'Ticket' : 'Tickets'
-                        }`
+                      ? `${selectedRecord.tickets?.length || 0} Open ${(selectedRecord.tickets?.length || 0) === 1 ? 'Ticket' : 'Tickets'
+                      }`
                       : `${formatDate(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)} at ${formatTime(selectedRecord.date || selectedRecord.voidedAt || selectedRecord.createdAt)}`}
                   </p>
                 </div>
@@ -1430,11 +1408,10 @@ export default function CancelledRefundedOrdersScreen({
                 <button
                   type="button"
                   onClick={() => setActiveTicketTab('all')}
-                  className={`px-3 py-1 rounded-full text-xs font-bold transition whitespace-nowrap ${
-                    activeTicketTab === 'all'
+                  className={`px-3 py-1 rounded-full text-xs font-bold transition whitespace-nowrap ${activeTicketTab === 'all'
                       ? 'bg-neutral-900 text-white shadow-2xs'
                       : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-100'
-                  }`}
+                    }`}
                 >
                   All Tickets ({selectedRecord.tickets.length})
                 </button>
@@ -1443,11 +1420,10 @@ export default function CancelledRefundedOrdersScreen({
                     key={t.id}
                     type="button"
                     onClick={() => setActiveTicketTab(t.id)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold transition whitespace-nowrap ${
-                      activeTicketTab === t.id
+                    className={`px-3 py-1 rounded-full text-xs font-bold transition whitespace-nowrap ${activeTicketTab === t.id
                         ? 'bg-red-600 text-white shadow-2xs'
                         : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-100'
-                    }`}
+                      }`}
                   >
                     {t.displayId} ({currencySymbol}{Number(t.total || 0).toFixed(0)})
                   </button>
@@ -1462,7 +1438,7 @@ export default function CancelledRefundedOrdersScreen({
                 <div className="space-y-4">
                   {(
                     activeTicketTab === 'all' ||
-                    !selectedRecord.tickets.some((t) => t.id === activeTicketTab)
+                      !selectedRecord.tickets.some((t) => t.id === activeTicketTab)
                       ? selectedRecord.tickets
                       : selectedRecord.tickets.filter((t) => t.id === activeTicketTab)
                   ).map((ticket, tIdx) => {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { db, isFirebaseConfigured } from '../../lib/firebase'
 import { jsPDF } from 'jspdf'
-import { IconAnalytics, IconDownload, IconFileText, IconSearch } from '../Icons'
+import { IconAnalytics, IconDownload, IconFileText, IconSearch, IconX, IconReceiptAudit } from '../Icons'
 import RevenueBarChart from '../analytics/RevenueBarChart'
 import {
   getDateRangeBounds,
@@ -132,6 +132,18 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
   const [tablePageSize, setTablePageSize] = useState(50)
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncMeta, setSyncMeta] = useState(null)
+  const [selectedOrder, setSelectedOrder] = useState(null)
+
+  // Close order popup modal on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setSelectedOrder(null)
+    }
+    if (selectedOrder) {
+      window.addEventListener('keydown', handleKeyDown)
+    }
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedOrder])
 
   // Reset pagination on filter or search changes
   useEffect(() => {
@@ -1986,6 +1998,260 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     setTimeout(() => setCopyStatus(false), 2500)
   }
 
+  // ── Render Order Details Popup Modal ──────────────────────────────────────
+  const renderOrderDetailsModal = () => {
+    if (!selectedOrder) return null
+
+    const dateObj = normalizeOrderDate(selectedOrder)
+    const dateFormatted = dateObj && !isNaN(dateObj.getTime())
+      ? dateObj.toLocaleString(undefined, {
+          weekday: 'short',
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : (selectedOrder.createdAt || '—')
+
+    const cInfo = getOrderChannelInfo(selectedOrder)
+    const locLabel = getOrderLocationLabel(selectedOrder)
+    const items = Array.isArray(selectedOrder.items) ? selectedOrder.items : []
+    const totalItemsCount = items.reduce((sum, i) => sum + (Number(i.qty || i.quantity) || 1), 0)
+
+    const subtotal = selectedOrder.subtotal != null
+      ? Number(selectedOrder.subtotal)
+      : items.reduce((sum, i) => sum + (Number(i.total || (Number(i.qty || i.quantity || 1) * Number(i.price || 0)))), 0)
+
+    const discount = Number(selectedOrder.discountAmount || selectedOrder.discount || 0)
+    const serviceFee = Number(selectedOrder.serviceFeeAmount || 0)
+    const cardFee = Number(selectedOrder.cardFeeAmount || 0)
+    const grandTotal = Number(selectedOrder.total || 0)
+    const statusUpper = String(selectedOrder.status || 'PAID').toUpperCase()
+
+    const statusBadgeColor =
+      statusUpper === 'PAID'
+        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        : statusUpper === 'REFUNDED'
+        ? 'bg-amber-50 text-amber-700 border-amber-200'
+        : statusUpper === 'VOIDED' || statusUpper === 'CANCELLED'
+        ? 'bg-red-50 text-red-700 border-red-200'
+        : 'bg-blue-50 text-blue-700 border-blue-200'
+
+    return (
+      <div
+        className="fixed inset-0 z-[70] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-xs animate-fadeIn"
+        onClick={() => setSelectedOrder(null)}
+      >
+        <div
+          className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden border border-neutral-200 max-h-[92vh] flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="p-4 sm:p-5 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/90">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="p-2.5 rounded-2xl bg-emerald-600 text-white shadow-sm shrink-0">
+                <IconReceiptAudit />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-extrabold text-base text-neutral-900 truncate">
+                    Order #{selectedOrder.id}
+                  </h3>
+                  {selectedOrder.dailyNumber && (
+                    <span className="text-[11px] font-bold text-neutral-600 bg-neutral-200/80 px-2 py-0.5 rounded-md">
+                      #{selectedOrder.dailyNumber}
+                    </span>
+                  )}
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusBadgeColor}`}>
+                    {statusUpper}
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-500 mt-0.5 truncate">
+                  {dateFormatted}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSelectedOrder(null)}
+              className="p-1.5 rounded-xl hover:bg-neutral-200 text-neutral-400 hover:text-neutral-700 transition cursor-pointer shrink-0 ml-2"
+            >
+              <IconX />
+            </button>
+          </div>
+
+          {/* Scrollable Body */}
+          <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1 text-xs">
+            {/* Meta Attributes Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="bg-neutral-50/90 rounded-xl p-2.5 border border-neutral-100">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block">Channel</span>
+                <span className="font-bold text-neutral-800 mt-0.5 block truncate">
+                  {cInfo.label}
+                </span>
+              </div>
+
+              <div className="bg-neutral-50/90 rounded-xl p-2.5 border border-neutral-100">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block">Location</span>
+                <span className="font-bold text-neutral-800 mt-0.5 block truncate">
+                  {locLabel}
+                </span>
+              </div>
+
+              <div className="bg-neutral-50/90 rounded-xl p-2.5 border border-neutral-100 col-span-2 sm:col-span-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 block">Payment</span>
+                <span className="font-bold text-neutral-800 mt-0.5 block truncate">
+                  {selectedOrder.paymentMethod || 'CASH'}
+                </span>
+              </div>
+            </div>
+
+            {/* Server / Cashier Info */}
+            {(selectedOrder.waiterName || selectedOrder.server || selectedOrder.cashierName || selectedOrder.customerName || selectedOrder.guestName) && (
+              <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-2.5 flex items-center justify-between text-xs">
+                <span className="text-emerald-800 font-medium">
+                  {selectedOrder.customerName || selectedOrder.guestName ? 'Customer / Guest:' : 'Server / Cashier:'}
+                </span>
+                <span className="font-bold text-emerald-950">
+                  {selectedOrder.waiterName || selectedOrder.server || selectedOrder.cashierName || selectedOrder.customerName || selectedOrder.guestName}
+                </span>
+              </div>
+            )}
+
+            {/* Order Note */}
+            {selectedOrder.note && (
+              <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-2.5 text-xs text-amber-900">
+                <span className="font-bold block mb-0.5 text-[10px] uppercase tracking-wider text-amber-800">Order Note</span>
+                <span className="leading-relaxed">{selectedOrder.note}</span>
+              </div>
+            )}
+
+            {/* Itemized Order Items */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">
+                  Items Ordered ({totalItemsCount})
+                </h4>
+              </div>
+
+              <div className="rounded-2xl border border-neutral-200 overflow-hidden divide-y divide-neutral-100">
+                {items.length > 0 ? (
+                  items.map((item, idx) => {
+                    const qty = Number(item.qty || item.quantity) || 1
+                    const unitPrice = Number(item.price || item.unitPrice || 0)
+                    const lineTotal = Number(item.total || item.subtotal || qty * unitPrice)
+
+                    return (
+                      <div key={idx} className="p-3 bg-white hover:bg-neutral-50/50 transition flex items-start justify-between gap-3 text-xs">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="h-5 w-5 rounded-md bg-neutral-100 text-neutral-800 font-bold flex items-center justify-center text-[10.5px] shrink-0">
+                              {qty}x
+                            </span>
+                            <span className="font-bold text-neutral-900 truncate">
+                              {item.name || item.title || 'Item'}
+                            </span>
+                          </div>
+                          {item.selectedVariant && (
+                            <p className="text-[11px] text-neutral-500 ml-7 mt-0.5">
+                              Variant: {item.selectedVariant.name || item.selectedVariant}
+                            </p>
+                          )}
+                          {Array.isArray(item.addOns) && item.addOns.length > 0 && (
+                            <p className="text-[11px] text-neutral-500 ml-7 mt-0.5">
+                              + {item.addOns.map((a) => (typeof a === 'string' ? a : a.name || '')).join(', ')}
+                            </p>
+                          )}
+                          {item.instructions && (
+                            <p className="text-[10.5px] italic text-amber-700 ml-7 mt-0.5">
+                              "{item.instructions}"
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          <span className="font-bold text-neutral-900 block">
+                            {currencySymbol}{lineTotal.toFixed(2)}
+                          </span>
+                          {qty > 1 && (
+                            <span className="text-[10px] text-neutral-400 block">
+                              {currencySymbol}{unitPrice.toFixed(2)} ea
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })
+                ) : (
+                  <div className="p-4 text-center text-xs text-neutral-400">
+                    No items recorded for this order.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Financial Totals Box */}
+            <div className="bg-neutral-50 rounded-2xl p-3.5 border border-neutral-200/80 space-y-2 text-xs">
+              <div className="flex justify-between text-neutral-600">
+                <span>Items Subtotal</span>
+                <span className="font-medium text-neutral-800">
+                  {currencySymbol}{subtotal.toFixed(2)}
+                </span>
+              </div>
+
+              {discount > 0 && (
+                <div className="flex justify-between text-amber-700">
+                  <span>Discount</span>
+                  <span className="font-semibold">
+                    -{currencySymbol}{discount.toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              {serviceFee > 0 && (
+                <div className="flex justify-between text-neutral-600">
+                  <span>Service Charge</span>
+                  <span className="font-medium text-neutral-800">
+                    +{currencySymbol}{serviceFee.toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              {cardFee > 0 && (
+                <div className="flex justify-between text-neutral-600">
+                  <span>Card Processing Fee</span>
+                  <span className="font-medium text-neutral-800">
+                    +{currencySymbol}{cardFee.toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              <div className="border-t border-neutral-200/80 pt-2 flex justify-between items-baseline font-bold text-neutral-900">
+                <span className="text-sm">Total Paid</span>
+                <span className="text-base text-emerald-700 font-extrabold">
+                  {currencySymbol}{grandTotal.toFixed(2)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="p-3 sm:p-4 bg-neutral-50 border-t border-neutral-100 flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setSelectedOrder(null)}
+              className="px-4 py-2 rounded-xl bg-neutral-900 text-white text-xs font-bold hover:bg-neutral-800 transition cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ── Render Reports View ───────────────────────────────────────────────────
   if (viewMode === 'reports') {
     return (
@@ -2689,8 +2955,20 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                         const locLabel = getOrderLocationLabel(order)
 
                         return (
-                          <tr key={order.id} className="hover:bg-neutral-50/80 transition">
-                            <td className="py-3 px-4 font-mono font-bold text-neutral-900">#{order.id}</td>
+                          <tr
+                            key={order.id}
+                            onClick={() => setSelectedOrder(order)}
+                            className="hover:bg-neutral-50/80 transition cursor-pointer group"
+                            title="Click to view full order details"
+                          >
+                            <td className="py-3 px-4 font-mono font-bold text-neutral-900 group-hover:text-emerald-700 transition">
+                              <div className="flex items-center gap-1.5">
+                                <span>#{order.id}</span>
+                                <span className="opacity-0 group-hover:opacity-100 text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 transition font-sans">
+                                  View
+                                </span>
+                              </div>
+                            </td>
                             <td className="py-3 px-4 text-neutral-500 whitespace-nowrap">{dateFormatted}</td>
                             <td className="py-3 px-4">
                               <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${cInfo.badgeColor}`}>
@@ -2931,6 +3209,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
             )}
           </div>
         </div>
+        {renderOrderDetailsModal()}
       </div>
     )
   }
@@ -3969,8 +4248,20 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
                     const locLabel = getOrderLocationLabel(order)
 
                     return (
-                      <tr key={order.id} className="hover:bg-neutral-50/50">
-                        <td className="py-3 font-mono font-bold text-neutral-900">#{order.id}</td>
+                      <tr
+                        key={order.id}
+                        onClick={() => setSelectedOrder(order)}
+                        className="hover:bg-neutral-50/70 transition cursor-pointer group"
+                        title="Click to view full order details"
+                      >
+                        <td className="py-3 font-mono font-bold text-neutral-900 group-hover:text-emerald-700 transition">
+                          <span className="flex items-center gap-1.5">
+                            <span>#{order.id}</span>
+                            <span className="opacity-0 group-hover:opacity-100 text-[9.5px] text-emerald-700 bg-emerald-50 px-1 py-0.2 rounded border border-emerald-200 transition font-sans">
+                              View
+                            </span>
+                          </span>
+                        </td>
                         <td className="py-3 text-neutral-500">{formattedDate}</td>
                         <td className="py-3">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${cInfo.badgeColor}`}>
@@ -4009,6 +4300,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           </table>
         </div>
       </div>
+      {renderOrderDetailsModal()}
     </div>
   )
 }
