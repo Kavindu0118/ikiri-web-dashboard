@@ -9,11 +9,13 @@ import {
   Timestamp,
 } from 'firebase/firestore'
 import { normalizeOrderDate, toLocalISOString } from './analyticsStorage'
+import { getActiveFirestoreInstance, normalizeVoidLog } from './ordersStorage'
 
 const DB_NAME = 'ikiri_orders_cache_v1'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const STORE_ORDERS = 'orders'
 const STORE_META = 'sync_meta'
+const STORE_VOID_LOGS = 'void_logs'
 
 let dbPromise = null
 
@@ -47,6 +49,13 @@ export const openOrdersDb = () => {
       // Metadata store: tracks last sync timestamps per restaurant
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META, { keyPath: 'restaurantId' })
+      }
+
+      // Void logs store: indexed by composite key (restaurantId__logId)
+      if (!db.objectStoreNames.contains(STORE_VOID_LOGS)) {
+        const voidStore = db.createObjectStore(STORE_VOID_LOGS, { keyPath: 'cacheKey' })
+        voidStore.createIndex('by_restaurant', 'restaurantId', { unique: false })
+        voidStore.createIndex('by_voided', 'voidedAt', { unique: false })
       }
     }
 
@@ -422,4 +431,341 @@ export const fetchOrdersWithIncrementalCache = async (
   }
 
   return allOrders
+}
+
+/**
+ * Retrieves all cached void logs for a restaurant from IndexedDB.
+ */
+export const getCachedVoidLogs = async (restaurantId, { startDate = null, endDate = null } = {}) => {
+  if (!restaurantId || !isIdbSupported()) return []
+
+  try {
+    const db = await openOrdersDb()
+    if (!db) return []
+
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_VOID_LOGS, 'readonly')
+      const store = tx.objectStore(STORE_VOID_LOGS)
+      const index = store.index('by_restaurant')
+      const request = index.getAll(IDBKeyRange.only(restaurantId))
+
+      request.onsuccess = () => {
+        const records = request.result || []
+        const logs = records.map((r) => {
+          const raw = r.log || r
+          return normalizeVoidLog(raw, r.logId || raw.id)
+        }).filter(Boolean)
+
+        resolve(filterAndSortVoidLogs(logs, startDate, endDate))
+      }
+
+      request.onerror = (err) => {
+        console.warn('Error reading cached void logs from IndexedDB:', err)
+        resolve([])
+      }
+    })
+  } catch (err) {
+    console.warn('Error in getCachedVoidLogs:', err)
+    return []
+  }
+}
+
+/**
+ * Persists void logs to the IndexedDB cache.
+ */
+export const saveVoidLogsToCache = async (restaurantId, voidLogs) => {
+  if (!restaurantId || !Array.isArray(voidLogs) || voidLogs.length === 0 || !isIdbSupported()) {
+    return false
+  }
+
+  try {
+    const db = await openOrdersDb()
+    if (!db) return false
+
+    return new Promise((resolve) => {
+      const tx = db.transaction([STORE_VOID_LOGS, STORE_META], 'readwrite')
+      const voidStore = tx.objectStore(STORE_VOID_LOGS)
+      const metaStore = tx.objectStore(STORE_META)
+
+      let latestDateStr = ''
+      let latestDateTime = 0
+
+      voidLogs.forEach((rawLog) => {
+        if (!rawLog || typeof rawLog !== 'object') return
+        const norm = normalizeVoidLog(rawLog)
+        if (!norm) return
+        const logId = norm.id
+
+        const dateObj = norm.date instanceof Date ? norm.date : (norm.voidedAt instanceof Date ? norm.voidedAt : null)
+        const dateIso = dateObj && !isNaN(dateObj.getTime())
+          ? toLocalISOString(dateObj)
+          : (typeof norm.voidedAt === 'string' ? norm.voidedAt : (typeof norm.createdAt === 'string' ? norm.createdAt : ''))
+
+        if (dateObj && !isNaN(dateObj.getTime())) {
+          const t = dateObj.getTime()
+          if (t > latestDateTime) {
+            latestDateTime = t
+            latestDateStr = dateIso
+          }
+        }
+
+        const serializableLog = {
+          ...norm,
+          voidedAt: dateIso,
+          date: dateIso,
+          createdAt: typeof norm.createdAt === 'string' ? norm.createdAt : dateIso,
+        }
+
+        const record = {
+          cacheKey: `${restaurantId}__${logId}`,
+          restaurantId,
+          logId: String(logId),
+          voidedAt: dateIso,
+          log: serializableLog,
+        }
+
+        voidStore.put(record)
+      })
+
+      // Update sync metadata
+      const metaReq = metaStore.get(restaurantId)
+      metaReq.onsuccess = () => {
+        const prevMeta = metaReq.result || {}
+        let resolvedLatestDate = latestDateStr
+        if (prevMeta.lastVoidLogAt && (!latestDateStr || prevMeta.lastVoidLogAt > latestDateStr)) {
+          resolvedLatestDate = prevMeta.lastVoidLogAt
+        }
+
+        metaStore.put({
+          ...prevMeta,
+          restaurantId,
+          lastVoidLogsSyncAt: new Date().toISOString(),
+          lastVoidLogAt: resolvedLatestDate,
+        })
+      }
+
+      tx.oncomplete = () => resolve(true)
+      tx.onerror = (err) => {
+        console.warn('Error writing void logs to IndexedDB:', err)
+        resolve(false)
+      }
+    })
+  } catch (err) {
+    console.warn('Error saving void logs to IndexedDB cache:', err)
+    return false
+  }
+}
+
+/**
+ * Clears cached void logs for a specific restaurant.
+ */
+export const clearRestaurantVoidLogsCache = async (restaurantId) => {
+  if (!restaurantId || !isIdbSupported()) return false
+
+  try {
+    const db = await openOrdersDb()
+    if (!db) return false
+
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_VOID_LOGS, 'readwrite')
+      const voidStore = tx.objectStore(STORE_VOID_LOGS)
+      const index = voidStore.index('by_restaurant')
+      const req = index.openKeyCursor(IDBKeyRange.only(restaurantId))
+
+      req.onsuccess = (e) => {
+        const cursor = e.target.result
+        if (cursor) {
+          voidStore.delete(cursor.primaryKey)
+          cursor.continue()
+        }
+      }
+
+      tx.oncomplete = () => resolve(true)
+      tx.onerror = () => resolve(false)
+    })
+  } catch (err) {
+    console.warn('Failed to clear void logs cache:', err)
+    return false
+  }
+}
+
+/**
+ * Filters and sorts void logs by date range.
+ */
+export const filterAndSortVoidLogs = (list, startDate, endDate) => {
+  let result = list
+  if (startDate || endDate) {
+    result = result.filter((r) => {
+      if (!r.date) return true
+      const d = r.date instanceof Date ? r.date : new Date(r.date)
+      if (isNaN(d.getTime())) return true
+      if (startDate && d < startDate) return false
+      if (endDate && d > endDate) return false
+      return true
+    })
+  }
+
+  return result.sort((a, b) => {
+    const timeA = a.date instanceof Date ? a.date.getTime() : a.date ? new Date(a.date).getTime() : 0
+    const timeB = b.date instanceof Date ? b.date.getTime() : b.date ? new Date(b.date).getTime() : 0
+    return timeB - timeA
+  })
+}
+
+/**
+ * Incremental Fetch Orchestrator for Void Logs:
+ * 1. Checks local IndexedDB cache first.
+ * 2. If cached logs exist, queries Firestore ONLY for newly appended void logs (delta sync).
+ * 3. Saves new records to IndexedDB and returns merged list.
+ */
+export const fetchVoidLogsWithIncrementalCache = async (
+  restaurantId,
+  {
+    startDate = null,
+    endDate = null,
+    limitCount = 2000,
+    backupConfig = null,
+    forceRefresh = false,
+    onInitialCachedLoaded = null,
+  } = {}
+) => {
+  if (!restaurantId) return []
+  const firestoreDb = getActiveFirestoreInstance(backupConfig)
+  if (!firestoreDb) return []
+
+  const logsMap = new Map()
+
+  const addLog = (raw, fallbackId) => {
+    const norm = normalizeVoidLog(raw, fallbackId)
+    if (!norm) return
+    logsMap.set(norm.id, norm)
+  }
+
+  const parseDoc = (data, docId) => {
+    if (!data) return
+    if (Array.isArray(data.void_logs)) {
+      data.void_logs.forEach((l, i) => addLog(l, `${docId}_vl_${i}`))
+    } else if (Array.isArray(data.voidLogs)) {
+      data.voidLogs.forEach((l, i) => addLog(l, `${docId}_vl_${i}`))
+    } else {
+      addLog(data, docId)
+    }
+  }
+
+  // 1. Check local IndexedDB cache
+  let cachedLogs = []
+  let latestCachedDateStr = null
+  let latestCachedDateTime = 0
+
+  if (!forceRefresh) {
+    try {
+      cachedLogs = await getCachedVoidLogs(restaurantId)
+      if (cachedLogs.length > 0) {
+        cachedLogs.forEach((l) => logsMap.set(l.id, l))
+
+        if (typeof onInitialCachedLoaded === 'function') {
+          const initialFiltered = filterAndSortVoidLogs(Array.from(logsMap.values()), startDate, endDate)
+          onInitialCachedLoaded(initialFiltered)
+        }
+
+        // Find newest void log in cache
+        for (const l of cachedLogs) {
+          const d = l.date instanceof Date ? l.date : (l.voidedAt ? new Date(l.voidedAt) : (l.createdAt ? new Date(l.createdAt) : null))
+          if (d && !isNaN(d.getTime()) && d.getTime() > latestCachedDateTime) {
+            latestCachedDateTime = d.getTime()
+            latestCachedDateStr = toLocalISOString(d) || (typeof l.voidedAt === 'string' ? l.voidedAt : (typeof l.createdAt === 'string' ? l.createdAt : null))
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Void logs cache read notice:', e)
+    }
+  } else {
+    await clearRestaurantVoidLogsCache(restaurantId)
+  }
+
+  // 2. Fetch delta or full from Firestore
+  const candidateCollections = [
+    collection(firestoreDb, 'backup', restaurantId, 'void_logs'),
+    collection(firestoreDb, 'restaurants', restaurantId, 'void_logs'),
+    collection(firestoreDb, 'backups', restaurantId, 'void_logs'),
+  ]
+
+  // If initial load and empty cache, also check parent backup doc
+  if (logsMap.size === 0) {
+    try {
+      const parentRef = doc(firestoreDb, 'backup', restaurantId)
+      const parentSnap = await getDoc(parentRef)
+      if (parentSnap.exists()) {
+        parseDoc(parentSnap.data(), parentSnap.id)
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const newLogsFetched = []
+
+  for (const colRef of candidateCollections) {
+    try {
+      let snap = null
+
+      if (latestCachedDateStr) {
+        // Incremental Delta Query: only fetch void logs created after latest cached date
+        try {
+          const qStr = query(
+            colRef,
+            where('voidedAt', '>=', latestCachedDateStr),
+            limit(limitCount)
+          )
+          snap = await getDocs(qStr)
+        } catch {
+          // Fallback to createdAt
+          try {
+            const qCreated = query(
+              colRef,
+              where('createdAt', '>=', latestCachedDateStr),
+              limit(limitCount)
+            )
+            snap = await getDocs(qCreated)
+          } catch {
+            // ignore
+          }
+        }
+      } else {
+        // Full initial fetch when cache is empty
+        try {
+          const qFull = query(colRef, limit(limitCount))
+          snap = await getDocs(qFull)
+        } catch {
+          // ignore
+        }
+      }
+
+      if (snap && !snap.empty) {
+        snap.forEach((docSnap) => {
+          const prevSize = logsMap.size
+          parseDoc(docSnap.data(), docSnap.id)
+          if (logsMap.size > prevSize) {
+            const added = logsMap.get(docSnap.id) || docSnap.data()
+            newLogsFetched.push(added)
+          }
+        })
+      }
+    } catch {
+      // continue next collection
+    }
+  }
+
+  const allLogs = Array.from(logsMap.values())
+
+  // 3. Persist to IndexedDB cache
+  if (newLogsFetched.length > 0 || (cachedLogs.length === 0 && allLogs.length > 0)) {
+    saveVoidLogsToCache(restaurantId, allLogs).catch((err) => {
+      console.warn('Error saving void logs to cache:', err)
+    })
+  }
+
+  // 4. Filter by date bounds and sort
+  return filterAndSortVoidLogs(allLogs, startDate, endDate)
 }

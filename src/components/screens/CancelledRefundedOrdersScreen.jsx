@@ -18,6 +18,11 @@ import {
   subscribeToTodayAuditOrders,
   subscribeToTodayVoidLogs,
 } from '../../lib/ordersStorage'
+import {
+  getCachedVoidLogs,
+  fetchVoidLogsWithIncrementalCache,
+  saveVoidLogsToCache,
+} from '../../lib/ordersIdbCache'
 import { getDateRangeBounds } from '../../lib/analyticsStorage'
 
 const PAGE_SIZE = 10
@@ -83,6 +88,18 @@ export default function CancelledRefundedOrdersScreen({
       try {
         // Query Firestore with exact date bounds to only read relevant records
         const { startDate, endDate } = getDateRangeBounds(dateFilter, customStart, customEnd)
+
+        // 1. Instantly display cached void logs from IndexedDB (0ms UI latency)
+        if (!isManualRefresh) {
+          getCachedVoidLogs(targetRestaurantId, { startDate, endDate })
+            .then((cached) => {
+              if (cached && cached.length > 0) {
+                setVoidLogs(cached)
+              }
+            })
+            .catch(() => {})
+        }
+
         const [archived, open, logs] = await Promise.all([
           fetchCancelledAndRefundedOrders(targetRestaurantId, {
             startDate,
@@ -90,10 +107,11 @@ export default function CancelledRefundedOrdersScreen({
             backupConfig: profile?.backupDatabase,
           }),
           fetchOpenTickets(targetRestaurantId, profile?.backupDatabase),
-          fetchVoidLogs(targetRestaurantId, {
+          fetchVoidLogsWithIncrementalCache(targetRestaurantId, {
             startDate,
             endDate,
             backupConfig: profile?.backupDatabase,
+            forceRefresh: isManualRefresh,
           }),
         ])
 
@@ -164,6 +182,8 @@ export default function CancelledRefundedOrdersScreen({
             return timeB - timeA
           })
         })
+        // Automatically persist live received void logs to cache
+        saveVoidLogsToCache(targetRestaurantId, todayLogs).catch(() => {})
         setLastUpdated(new Date())
       },
       (err) => console.warn('Void logs live subscription:', err),
