@@ -17,7 +17,18 @@ const STORE_ORDERS = 'orders'
 const STORE_META = 'sync_meta'
 const STORE_VOID_LOGS = 'void_logs'
 
-let dbPromise = null
+const dbPromises = new Map()
+
+/**
+ * Derives a sanitized IndexedDB database name for a specific project.
+ */
+export const getCacheDbName = (projectId) => {
+  if (!projectId || projectId === import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+    return DB_NAME
+  }
+  const safeId = String(projectId).replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `ikiri_orders_cache_${safeId}`
+}
 
 /**
  * Checks whether IndexedDB is supported in the current runtime environment.
@@ -29,12 +40,13 @@ export const isIdbSupported = () => {
 /**
  * Opens or reuses the IndexedDB database connection.
  */
-export const openOrdersDb = () => {
+export const openOrdersDb = (dbName = DB_NAME) => {
   if (!isIdbSupported()) return Promise.resolve(null)
-  if (dbPromise) return dbPromise
+  const targetDbName = dbName || DB_NAME
+  if (dbPromises.has(targetDbName)) return dbPromises.get(targetDbName)
 
-  dbPromise = new Promise((resolve, reject) => {
-    const request = window.indexedDB.open(DB_NAME, DB_VERSION)
+  const promise = new Promise((resolve) => {
+    const request = window.indexedDB.open(targetDbName, DB_VERSION)
 
     request.onupgradeneeded = (event) => {
       const db = event.target.result
@@ -64,22 +76,23 @@ export const openOrdersDb = () => {
     }
 
     request.onerror = (err) => {
-      console.warn('Failed to open IndexedDB orders cache:', err)
+      console.warn(`Failed to open IndexedDB orders cache (${targetDbName}):`, err)
       resolve(null)
     }
   })
 
-  return dbPromise
+  dbPromises.set(targetDbName, promise)
+  return promise
 }
 
 /**
  * Retrieves all cached orders for a given restaurant from IndexedDB.
  */
-export const getCachedOrders = async (restaurantId) => {
+export const getCachedOrders = async (restaurantId, dbName = DB_NAME) => {
   if (!restaurantId || !isIdbSupported()) return []
 
   try {
-    const db = await openOrdersDb()
+    const db = await openOrdersDb(dbName)
     if (!db) return []
 
     return new Promise((resolve) => {
@@ -109,11 +122,11 @@ export const getCachedOrders = async (restaurantId) => {
 /**
  * Retrieves synchronization metadata for a restaurant.
  */
-export const getCacheSyncMeta = async (restaurantId) => {
+export const getCacheSyncMeta = async (restaurantId, dbName = DB_NAME) => {
   if (!restaurantId || !isIdbSupported()) return null
 
   try {
-    const db = await openOrdersDb()
+    const db = await openOrdersDb(dbName)
     if (!db) return null
 
     return new Promise((resolve) => {
@@ -137,13 +150,13 @@ export const getCacheSyncMeta = async (restaurantId) => {
 /**
  * Persists an array of orders to IndexedDB cache for a restaurant.
  */
-export const saveOrdersToCache = async (restaurantId, orders) => {
+export const saveOrdersToCache = async (restaurantId, orders, dbName = DB_NAME) => {
   if (!restaurantId || !Array.isArray(orders) || orders.length === 0 || !isIdbSupported()) {
     return false
   }
 
   try {
-    const db = await openOrdersDb()
+    const db = await openOrdersDb(dbName)
     if (!db) return false
 
     return new Promise((resolve) => {
@@ -214,11 +227,11 @@ export const saveOrdersToCache = async (restaurantId, orders) => {
 /**
  * Clears cached orders and sync metadata for a specific restaurant.
  */
-export const clearRestaurantOrdersCache = async (restaurantId) => {
+export const clearRestaurantOrdersCache = async (restaurantId, dbName = DB_NAME) => {
   if (!restaurantId || !isIdbSupported()) return false
 
   try {
-    const db = await openOrdersDb()
+    const db = await openOrdersDb(dbName)
     if (!db) return false
 
     return new Promise((resolve) => {
@@ -262,10 +275,12 @@ export const fetchOrdersWithIncrementalCache = async (
     forceRefresh = false,
     onInitialCachedLoaded = null,
     maxLimit = 5000,
+    cacheDbName = null,
   } = {}
 ) => {
   if (!firestoreDb || !targetRestaurantId) return []
 
+  const targetCacheDb = cacheDbName || DB_NAME
   const ordersMap = new Map()
 
   const addOrder = (orderData, fallbackId) => {
@@ -304,7 +319,7 @@ export const fetchOrdersWithIncrementalCache = async (
 
   if (!forceRefresh) {
     try {
-      cachedOrders = await getCachedOrders(targetRestaurantId)
+      cachedOrders = await getCachedOrders(targetRestaurantId, targetCacheDb)
       if (cachedOrders.length > 0) {
         cachedOrders.forEach((o) => addOrder(o))
 
@@ -314,7 +329,7 @@ export const fetchOrdersWithIncrementalCache = async (
         }
 
         // Determine latest timestamp in cache
-        const meta = await getCacheSyncMeta(targetRestaurantId)
+        const meta = await getCacheSyncMeta(targetRestaurantId, targetCacheDb)
         if (meta?.lastOrderCreatedAt) {
           latestCachedDateStr = meta.lastOrderCreatedAt
           const d = normalizeOrderDate({ createdAt: meta.lastOrderCreatedAt })
@@ -335,7 +350,7 @@ export const fetchOrdersWithIncrementalCache = async (
     }
   } else {
     // If user clicked Force Refresh, clear existing cache
-    await clearRestaurantOrdersCache(targetRestaurantId)
+    await clearRestaurantOrdersCache(targetRestaurantId, targetCacheDb)
   }
 
   // ── Step 2: Fetch Delta from Firestore ─────────────────────────────────────
@@ -422,12 +437,12 @@ export const fetchOrdersWithIncrementalCache = async (
   // ── Step 3: Update Local Cache with New Data ───────────────────────────────
   if (newOrdersFetched.length > 0 || (cachedOrders.length === 0 && allOrders.length > 0)) {
     // If we fetched new orders or it's the initial full load, save to IndexedDB
-    saveOrdersToCache(targetRestaurantId, allOrders).catch((err) => {
+    saveOrdersToCache(targetRestaurantId, allOrders, targetCacheDb).catch((err) => {
       console.warn('Error saving to cache:', err)
     })
   } else if (cachedOrders.length > 0) {
     // No new orders created since last check; refresh metadata sync timestamp
-    saveOrdersToCache(targetRestaurantId, []).catch(() => {})
+    saveOrdersToCache(targetRestaurantId, [], targetCacheDb).catch(() => {})
   }
 
   return allOrders
@@ -436,11 +451,11 @@ export const fetchOrdersWithIncrementalCache = async (
 /**
  * Retrieves all cached void logs for a restaurant from IndexedDB.
  */
-export const getCachedVoidLogs = async (restaurantId, { startDate = null, endDate = null } = {}) => {
+export const getCachedVoidLogs = async (restaurantId, { startDate = null, endDate = null, dbName = DB_NAME } = {}) => {
   if (!restaurantId || !isIdbSupported()) return []
 
   try {
-    const db = await openOrdersDb()
+    const db = await openOrdersDb(dbName)
     if (!db) return []
 
     return new Promise((resolve) => {
@@ -473,13 +488,13 @@ export const getCachedVoidLogs = async (restaurantId, { startDate = null, endDat
 /**
  * Persists void logs to the IndexedDB cache.
  */
-export const saveVoidLogsToCache = async (restaurantId, voidLogs) => {
+export const saveVoidLogsToCache = async (restaurantId, voidLogs, dbName = DB_NAME) => {
   if (!restaurantId || !Array.isArray(voidLogs) || voidLogs.length === 0 || !isIdbSupported()) {
     return false
   }
 
   try {
-    const db = await openOrdersDb()
+    const db = await openOrdersDb(dbName)
     if (!db) return false
 
     return new Promise((resolve) => {
@@ -559,11 +574,11 @@ export const saveVoidLogsToCache = async (restaurantId, voidLogs) => {
 /**
  * Clears cached void logs for a specific restaurant.
  */
-export const clearRestaurantVoidLogsCache = async (restaurantId) => {
+export const clearRestaurantVoidLogsCache = async (restaurantId, dbName = DB_NAME) => {
   if (!restaurantId || !isIdbSupported()) return false
 
   try {
-    const db = await openOrdersDb()
+    const db = await openOrdersDb(dbName)
     if (!db) return false
 
     return new Promise((resolve) => {
@@ -627,9 +642,11 @@ export const fetchVoidLogsWithIncrementalCache = async (
     backupConfig = null,
     forceRefresh = false,
     onInitialCachedLoaded = null,
+    cacheDbName = null,
   } = {}
 ) => {
   if (!restaurantId) return []
+  const targetCacheDb = cacheDbName || DB_NAME
   const firestoreDb = getActiveFirestoreInstance(backupConfig)
   if (!firestoreDb) return []
 
@@ -659,7 +676,7 @@ export const fetchVoidLogsWithIncrementalCache = async (
 
   if (!forceRefresh) {
     try {
-      cachedLogs = await getCachedVoidLogs(restaurantId)
+      cachedLogs = await getCachedVoidLogs(restaurantId, { startDate, endDate, dbName: targetCacheDb })
       if (cachedLogs.length > 0) {
         cachedLogs.forEach((l) => logsMap.set(l.id, l))
 
@@ -681,7 +698,7 @@ export const fetchVoidLogsWithIncrementalCache = async (
       console.warn('Void logs cache read notice:', e)
     }
   } else {
-    await clearRestaurantVoidLogsCache(restaurantId)
+    await clearRestaurantVoidLogsCache(restaurantId, targetCacheDb)
   }
 
   // 2. Fetch delta or full from Firestore
@@ -761,7 +778,7 @@ export const fetchVoidLogsWithIncrementalCache = async (
 
   // 3. Persist to IndexedDB cache
   if (newLogsFetched.length > 0 || (cachedLogs.length === 0 && allLogs.length > 0)) {
-    saveVoidLogsToCache(restaurantId, allLogs).catch((err) => {
+    saveVoidLogsToCache(restaurantId, allLogs, targetCacheDb).catch((err) => {
       console.warn('Error saving void logs to cache:', err)
     })
   }

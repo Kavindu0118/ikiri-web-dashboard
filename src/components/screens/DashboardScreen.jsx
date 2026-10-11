@@ -3,6 +3,7 @@ import { IconPlus, IconMenu, IconEdit, IconEye, IconQr } from '../Icons'
 export default function DashboardScreen({
   profile,
   restaurantSettings,
+  selectedRestaurant,
   savedMenus,
   draftMenu,
   draftItemCount,
@@ -12,6 +13,8 @@ export default function DashboardScreen({
   openMenuPreview,
   openQrPreview
 }) {
+  const activeName = selectedRestaurant?.name || restaurantSettings?.name || profile?.restaurantName || ''
+
   return (
     <div className="p-6 sm:p-8">
       {/* Welcome Banner */}
@@ -20,7 +23,7 @@ export default function DashboardScreen({
         <div className="pointer-events-none absolute -bottom-8 -left-8 h-36 w-36 rounded-full" style={{ background: 'rgba(255,255,255,0.05)' }} />
         <p className="font-mono text-xs uppercase tracking-widest text-green-200">Smart POS Dashboard</p>
         <h1 className="mt-3 text-3xl font-bold text-white">
-          {restaurantSettings?.name ? `Welcome back, ${restaurantSettings.name}!` : 'Welcome to Smart POS Dashboard'}
+          {activeName ? `Welcome back, ${activeName}!` : 'Welcome to Smart POS Dashboard'}
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-green-100 max-w-xl">
           Manage your orders, point of sale, inventory, and menus all in one centralized smart dashboard.

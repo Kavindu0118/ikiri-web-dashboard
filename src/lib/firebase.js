@@ -54,3 +54,43 @@ export const logoutUser = async () => {
   if (!auth) throw new Error('Firebase not initialized')
   return signOut(auth)
 }
+
+/**
+ * Cached map of named Firestore instances for multi-project/multi-restaurant setup.
+ */
+const firestoreInstances = new Map()
+
+export const getFirestoreForRestaurant = (restaurant) => {
+  if (!restaurant) return db
+  if (restaurant.isDefault || !restaurant.firebaseConfig?.projectId || !restaurant.firebaseConfig?.apiKey) {
+    return db
+  }
+
+  const appName = `restaurant_app_${restaurant.id || restaurant.projectId}`
+
+  if (firestoreInstances.has(appName)) {
+    return firestoreInstances.get(appName)
+  }
+
+  const apps = getApps()
+  const existingApp = apps.find((a) => a.name === appName)
+  const secondaryApp = existingApp || initializeApp(restaurant.firebaseConfig, appName)
+
+  let secondaryDb = null
+  if (typeof window !== 'undefined' && typeof window.indexedDB !== 'undefined') {
+    try {
+      secondaryDb = initializeFirestore(secondaryApp, {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+        }),
+      })
+    } catch {
+      secondaryDb = getFirestore(secondaryApp)
+    }
+  } else {
+    secondaryDb = getFirestore(secondaryApp)
+  }
+
+  firestoreInstances.set(appName, secondaryDb)
+  return secondaryDb
+}

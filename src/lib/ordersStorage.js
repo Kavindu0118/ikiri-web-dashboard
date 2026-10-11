@@ -18,9 +18,18 @@ import { normalizeOrderDate, toLocalISOString } from './analyticsStorage'
  * Returns the preferred Firestore instance (custom backup db or default Firebase db).
  */
 export const getActiveFirestoreInstance = (backupConfig) => {
-  if (backupConfig && isBackupDbConfigured(backupConfig)) {
-    const backupDb = getBackupFirestore(backupConfig)
-    if (backupDb) return backupDb
+  if (backupConfig) {
+    if (typeof backupConfig === 'object' && (backupConfig.type === 'firestore' || backupConfig._databaseId || backupConfig.app)) {
+      return backupConfig
+    }
+    if (backupConfig.firebaseConfig && isBackupDbConfigured(backupConfig.firebaseConfig)) {
+      const db = getBackupFirestore(backupConfig.firebaseConfig)
+      if (db) return db
+    }
+    if (isBackupDbConfigured(backupConfig)) {
+      const backupDb = getBackupFirestore(backupConfig)
+      if (backupDb) return backupDb
+    }
   }
   return defaultDb
 }

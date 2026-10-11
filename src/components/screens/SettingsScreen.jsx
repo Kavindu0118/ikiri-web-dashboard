@@ -1,11 +1,12 @@
 import Toggle from '../Toggle'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import QRCode from 'qrcode'
 import { IconTrash, IconLock, IconEye, IconQr } from '../Icons'
 
 export default function SettingsScreen({
   restaurantSettings,
   profile,
+  selectedRestaurant = null,
   isRestaurantLoading,
   isRestaurantUpdating,
   handleToggleOnlineOrders,
@@ -50,11 +51,21 @@ export default function SettingsScreen({
 
   const [isAdditionalSettingsOpen, setIsAdditionalSettingsOpen] = useState(false)
 
-  const [tempName, setTempName] = useState(restaurantSettings?.name || '')
+  const restaurantDisplayName = restaurantSettings?.name || selectedRestaurant?.name || profile?.restaurantName || '—'
+
+  const [tempName, setTempName] = useState(restaurantSettings?.name || selectedRestaurant?.name || '')
   const [tempSlug, setTempSlug] = useState(restaurantSettings?.slug || '')
   const [tempAddress, setTempAddress] = useState(restaurantSettings?.address || '')
   const [tempPhone, setTempPhone] = useState(restaurantSettings?.phone || '')
   const [tempWebsite, setTempWebsite] = useState(restaurantSettings?.website || '')
+
+  useEffect(() => {
+    setTempName(restaurantSettings?.name || selectedRestaurant?.name || '')
+    if (restaurantSettings?.slug) setTempSlug(restaurantSettings.slug)
+    if (restaurantSettings?.address) setTempAddress(restaurantSettings.address)
+    if (restaurantSettings?.phone) setTempPhone(restaurantSettings.phone)
+    if (restaurantSettings?.website) setTempWebsite(restaurantSettings.website)
+  }, [restaurantSettings, selectedRestaurant])
 
   const [newCode, setNewCode] = useState('')
   const [selectedWaiterQr, setSelectedWaiterQr] = useState(null)
@@ -351,13 +362,13 @@ export default function SettingsScreen({
             ) : (
               <button
                 onClick={() => {
-                  setTempName(restaurantSettings?.name || '')
+                  setTempName(restaurantSettings?.name || selectedRestaurant?.name || '')
                   setEditingName(true)
                 }}
                 disabled={isRestaurantLoading || isRestaurantUpdating}
                 className="text-sm font-semibold text-neutral-900 hover:text-green-600 transition disabled:opacity-60"
               >
-                {restaurantSettings?.name || profile?.restaurantName || '—'}
+                {restaurantDisplayName}
               </button>
             )}
           </div>

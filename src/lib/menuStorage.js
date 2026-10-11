@@ -85,14 +85,15 @@ const findRestaurantBySlug = async (slug) => {
   return snapshot.docs[0]
 }
 
-export const isRestaurantSlugAvailable = async (restaurantId, slug) => {
-  if (!isFirebaseConfigured || !db || !restaurantId || !slug) return false
+export const isRestaurantSlugAvailable = async (restaurantId, slug, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId || !slug) return false
 
   const normalizedSlug = slugify(slug)
   if (!normalizedSlug) return false
 
   const restaurantQuery = query(
-    collection(db, RESTAURANTS_COLLECTION),
+    collection(firestore, RESTAURANTS_COLLECTION),
     where('slug', '==', normalizedSlug),
     limit(2),
   )
@@ -278,14 +279,15 @@ export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = nul
   }
 }
 
-export const getRestaurantMenu = async (restaurantId) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return null
+export const getRestaurantMenu = async (restaurantId, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return null
 
-  const restaurantSnap = await getDoc(doc(db, RESTAURANTS_COLLECTION, restaurantId))
+  const restaurantSnap = await getDoc(doc(firestore, RESTAURANTS_COLLECTION, restaurantId))
   if (!restaurantSnap.exists()) return null
 
   const menuSnap = await getDoc(
-    doc(db, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC),
+    doc(firestore, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC),
   )
   if (!menuSnap.exists()) return null
 
@@ -296,17 +298,27 @@ export const getRestaurantMenu = async (restaurantId) => {
   })
 }
 
-export const getUserMenus = async (restaurantId) => {
-  const menu = await getRestaurantMenu(restaurantId)
+export const getUserMenus = async (restaurantId, customDb = null) => {
+  const menu = await getRestaurantMenu(restaurantId, customDb)
   return menu ? [menu] : []
 }
 
-export const getUserProfile = async (uid) => {
-  if (!isFirebaseConfigured || !db || !uid) return null
-  const docRef = doc(db, USERS_COLLECTION, uid)
-  const snap = await getDoc(docRef)
-  if (!snap.exists()) return null
-  return { uid: snap.id, ...snap.data() }
+export const getUserProfile = async (uid, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !uid) return null
+  try {
+    const docRef = doc(firestore, USERS_COLLECTION, uid)
+    const snapPromise = getDoc(docRef)
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('getUserProfile timeout')), 4000)
+    )
+    const snap = await Promise.race([snapPromise, timeoutPromise])
+    if (!snap.exists()) return null
+    return { uid: snap.id, ...snap.data() }
+  } catch (err) {
+    console.warn('Could not fetch user profile:', err)
+    return null
+  }
 }
 
 export const createRestaurantForUser = async (uid, profileData) => {
@@ -359,10 +371,11 @@ export const createRestaurantForUser = async (uid, profileData) => {
   }
 }
 
-export const getOrCreateSubscription = async (restaurantId, userId = '') => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return null
+export const getOrCreateSubscription = async (restaurantId, userId = '', customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return null
   try {
-    const subRef = doc(db, 'subscriptions', restaurantId)
+    const subRef = doc(firestore, 'subscriptions', restaurantId)
     const snap = await getDoc(subRef)
     if (snap.exists()) {
       return { id: snap.id, ...snap.data() }
@@ -386,9 +399,10 @@ export const getOrCreateSubscription = async (restaurantId, userId = '') => {
   }
 }
 
-export const subscribeToSubscription = (restaurantId, onUpdate) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return () => {}
-  const subRef = doc(db, 'subscriptions', restaurantId)
+export const subscribeToSubscription = (restaurantId, onUpdate, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return () => {}
+  const subRef = doc(firestore, 'subscriptions', restaurantId)
   return onSnapshot(subRef, (snap) => {
     if (snap.exists()) {
       onUpdate({ id: snap.id, ...snap.data() })
@@ -400,29 +414,40 @@ export const subscribeToSubscription = (restaurantId, onUpdate) => {
   })
 }
 
-export const saveUserProfile = async (uid, profileData) => {
-  if (!isFirebaseConfigured || !db || !uid) return false
-  await setDoc(doc(db, USERS_COLLECTION, uid), {
+export const saveUserProfile = async (uid, profileData, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !uid) return false
+  await setDoc(doc(firestore, USERS_COLLECTION, uid), {
     ...profileData,
     updatedAt: serverTimestamp(),
   }, { merge: true })
   return true
 }
 
-export const getRestaurantSettings = async (restaurantId) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return null
-  const docRef = doc(db, RESTAURANTS_COLLECTION, restaurantId)
-  const snap = await getDoc(docRef)
-  if (snap.exists()) return { id: snap.id, ...snap.data() }
+export const getRestaurantSettings = async (restaurantId, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return null
+  try {
+    const docRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId)
+    const snapPromise = getDoc(docRef)
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('getRestaurantSettings timeout')), 4000)
+    )
+    const snap = await Promise.race([snapPromise, timeoutPromise])
+    if (snap.exists()) return { id: snap.id, ...snap.data() }
+  } catch (err) {
+    console.warn('Could not fetch restaurant settings:', err)
+  }
   return null
 }
 
-export const subscribeToRestaurantSettings = (restaurantId, callback) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) {
+export const subscribeToRestaurantSettings = (restaurantId, callback, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) {
     callback(null)
     return () => {}
   }
-  const docRef = doc(db, RESTAURANTS_COLLECTION, restaurantId)
+  const docRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId)
   return onSnapshot(
     docRef,
     (snap) => {
@@ -452,13 +477,23 @@ export const saveRestaurantProfile = async (restaurantId, profileData) => {
   return true
 }
 
-export const saveRestaurantSettings = async (restaurantId, settings) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return false
-  await setDoc(doc(db, RESTAURANTS_COLLECTION, restaurantId), {
-    ...settings,
-    updatedAt: serverTimestamp(),
-  }, { merge: true })
-  return true
+export const saveRestaurantSettings = async (restaurantId, settings, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return false
+  try {
+    const savePromise = setDoc(doc(firestore, RESTAURANTS_COLLECTION, restaurantId), {
+      ...settings,
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('saveRestaurantSettings timeout')), 4000)
+    )
+    await Promise.race([savePromise, timeoutPromise])
+    return true
+  } catch (err) {
+    console.warn('Could not save restaurant settings:', err)
+    return false
+  }
 }
 
 export const createRestaurantOrder = async (restaurantId, orderPayload) => {
@@ -514,10 +549,11 @@ export const deleteMenuRecord = async (restaurantId) => {
   }
 }
 
-export const getWaiterCodes = async (restaurantId) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return []
+export const getWaiterCodes = async (restaurantId, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return []
   try {
-    const docRef = doc(db, 'waiterCodes', restaurantId)
+    const docRef = doc(firestore, 'waiterCodes', restaurantId)
     const snap = await getDoc(docRef)
     if (!snap.exists()) return []
     const data = snap.data()
@@ -566,5 +602,52 @@ export const validateWaiterCode = async (restaurantId, code) => {
     return false
   }
 }
+
+/**
+ * Multi-Project Connected Restaurants (Saved to Project 1 Firestore under users/{uid}/connected_restaurants)
+ */
+export const getConnectedRestaurants = async (uid) => {
+  if (!isFirebaseConfigured || !db || !uid) return []
+  try {
+    const colRef = collection(db, USERS_COLLECTION, uid, 'connected_restaurants')
+    const snap = await getDocs(colRef)
+    const list = []
+    snap.forEach((d) => {
+      list.push({ id: d.id, ...d.data() })
+    })
+    return list
+  } catch (err) {
+    console.warn('Failed to load connected restaurants from Firestore:', err)
+    return []
+  }
+}
+
+export const saveConnectedRestaurant = async (uid, restaurantData) => {
+  if (!isFirebaseConfigured || !db || !uid || !restaurantData?.id) return false
+  try {
+    const docRef = doc(db, USERS_COLLECTION, uid, 'connected_restaurants', restaurantData.id)
+    await setDoc(docRef, {
+      ...restaurantData,
+      updatedAt: serverTimestamp(),
+    }, { merge: true })
+    return true
+  } catch (err) {
+    console.error('Failed to save connected restaurant to Firestore:', err)
+    throw err
+  }
+}
+
+export const deleteConnectedRestaurant = async (uid, restaurantId) => {
+  if (!isFirebaseConfigured || !db || !uid || !restaurantId) return false
+  try {
+    const docRef = doc(db, USERS_COLLECTION, uid, 'connected_restaurants', restaurantId)
+    await deleteDoc(docRef)
+    return true
+  } catch (err) {
+    console.error('Failed to delete connected restaurant from Firestore:', err)
+    return false
+  }
+}
+
 
 

@@ -104,7 +104,15 @@ export const getOrderLocationLabel = (order) => {
   return 'Walk-in / Counter'
 }
 
-export default function AnalyticsScreen({ profile, restaurantSettings, restaurantId: propRestaurantId, setActiveSection }) {
+export default function AnalyticsScreen({
+  profile,
+  restaurantSettings,
+  restaurantId: propRestaurantId,
+  setActiveSection,
+  activeDb,
+  cacheDbName,
+}) {
+  const currentDb = activeDb || db
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -201,7 +209,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
 
   // Strategy 1: Local IndexedDB Caching with Incremental Server-Side Delta Fetch
   const fetchBackupData = useCallback(async (forceRefresh = false) => {
-    if (!isFirebaseConfigured || !db || !targetRestaurantId) {
+    if (!currentDb || !targetRestaurantId) {
       setLoading(false)
       return
     }
@@ -214,8 +222,9 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     setError(null)
 
     try {
-      const fetchedOrders = await fetchOrdersWithIncrementalCache(db, targetRestaurantId, {
+      const fetchedOrders = await fetchOrdersWithIncrementalCache(currentDb, targetRestaurantId, {
         forceRefresh,
+        cacheDbName,
         onInitialCachedLoaded: (cached) => {
           if (cached && cached.length > 0) {
             setOrders(cached)
@@ -224,7 +233,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
         },
       })
       setOrders(fetchedOrders)
-      const meta = await getCacheSyncMeta(targetRestaurantId)
+      const meta = await getCacheSyncMeta(targetRestaurantId, cacheDbName)
       setSyncMeta(meta)
     } catch (err) {
       console.error('Error fetching backup database orders:', err)
@@ -233,7 +242,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
       setLoading(false)
       setIsSyncing(false)
     }
-  }, [targetRestaurantId, orders.length])
+  }, [currentDb, targetRestaurantId, orders.length, cacheDbName])
 
   useEffect(() => {
     fetchBackupData()
@@ -241,14 +250,14 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
 
   // Strategy 3: Real-time listener restricted strictly to active shift (Today)
   useEffect(() => {
-    if (!isFirebaseConfigured || !db || !targetRestaurantId) return
+    if (!currentDb || !targetRestaurantId) return
 
     // Only subscribe to real-time events when viewing today or ranges that encompass current day
     const isViewingToday = filterRange === 'today' || filterRange === '7d' || filterRange === '7days' || filterRange === '30d' || filterRange === '30days'
     if (!isViewingToday) return
 
     const unsub = subscribeToTodayOrders(
-      db,
+      currentDb,
       targetRestaurantId,
       (todayOrders) => {
         if (!todayOrders || todayOrders.length === 0) return
@@ -257,7 +266,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
           todayOrders.forEach((o) => map.set(o.id, { ...map.get(o.id), ...o }))
           const merged = Array.from(map.values())
           // Automatically persist live orders to IndexedDB cache
-          saveOrdersToCache(targetRestaurantId, todayOrders).catch(() => { })
+          saveOrdersToCache(targetRestaurantId, todayOrders, cacheDbName).catch(() => { })
           return merged
         })
       },
@@ -267,7 +276,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
     )
 
     return () => unsub()
-  }, [targetRestaurantId, filterRange])
+  }, [currentDb, targetRestaurantId, filterRange, cacheDbName])
 
   // Filter orders by selected date range
   const filteredOrders = useMemo(() => {
@@ -999,10 +1008,10 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
 
   // Strategy 2: Automatically save pre-aggregated daily summary rollup when viewing today's active data
   useEffect(() => {
-    if (!isFirebaseConfigured || !db || !targetRestaurantId || reportData.totalOrdersCount === 0) return
+    if (!currentDb || !targetRestaurantId || reportData.totalOrdersCount === 0) return
     if (filterRange === 'today') {
       const todayKey = new Date().toISOString().split('T')[0]
-      saveDailySummary(db, targetRestaurantId, todayKey, {
+      saveDailySummary(currentDb, targetRestaurantId, todayKey, {
         totalOrdersCount: reportData.totalOrdersCount,
         grossRevenue: reportData.totalGrossRevenue,
         netRevenue: reportData.totalNetRevenue,
@@ -1014,7 +1023,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
         totalItemsSold: reportData.totalItemsSold,
       })
     }
-  }, [reportData, filterRange, targetRestaurantId])
+  }, [reportData, filterRange, targetRestaurantId, currentDb])
 
   const totalTransactions = reportData.filteredOrders.length
   const totalTransactionPages = Math.ceil(totalTransactions / tablePageSize) || 1
@@ -1822,7 +1831,7 @@ export default function AnalyticsScreen({ profile, restaurantSettings, restauran
   }
 
   // Render unconfigured UI state
-  if (!isFirebaseConfigured || !db) {
+  if (!currentDb) {
     return (
       <div className="p-6 sm:p-8 flex flex-col items-center justify-center min-h-[70vh] max-w-xl mx-auto text-center">
         <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-3xl bg-amber-50 text-amber-600">

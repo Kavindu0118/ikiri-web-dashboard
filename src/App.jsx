@@ -1,7 +1,11 @@
 import LoginModal from './LoginModal'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { Routes, Route, useParams, useSearchParams } from 'react-router-dom'
-import { auth, signInWithGoogle, logoutUser } from './lib/firebase'
+import { auth, signInWithGoogle, logoutUser, getFirestoreForRestaurant } from './lib/firebase'
+import { getDefaultMainRestaurant, getStoredConnectedRestaurants, setStoredConnectedRestaurants } from './config/restaurants'
+import { getCacheDbName } from './lib/ordersIdbCache'
+import ConnectRestaurantModal from './components/ConnectRestaurantModal'
+import RestaurantDropdown from './components/RestaurantDropdown'
 import { onAuthStateChanged } from 'firebase/auth'
 import QRCode from 'qrcode'
 import { jsPDF } from 'jspdf'
@@ -28,6 +32,7 @@ import {
   saveRestaurantSettings,
   isRestaurantSlugAvailable,
   saveUserProfile,
+  getUserProfile,
   createRestaurantOrder,
   subscribeToRestaurantOrder,
   cancelRestaurantOrder,
@@ -36,6 +41,9 @@ import {
   addWaiterCode,
   deleteWaiterCode,
   validateWaiterCode,
+  getConnectedRestaurants,
+  saveConnectedRestaurant,
+  deleteConnectedRestaurant,
 } from './lib/menuStorage'
 
 import { uploadMenuItemImage, isSupabaseConfigured } from './lib/supabase'
@@ -1511,7 +1519,8 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
 
 function Editor() {
   const [user, setUser] = useState(null)
-  const [profile, setProfile] = useState(null)
+  const [primaryProfile, setPrimaryProfile] = useState(null)
+  const [branchProfile, setBranchProfile] = useState(null)
   const [activeSection, setActiveSection] = useState('dashboard')
   const [showBuilder, setShowBuilder] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
@@ -1655,7 +1664,192 @@ function Editor() {
   const [rooms, setRooms] = useState([])
   const [isRestaurantLoading, setIsRestaurantLoading] = useState(false)
   const [isRestaurantUpdating, setIsRestaurantUpdating] = useState(false)
-  const restaurantId = profile?.restaurantId || null
+  // Multi-restaurant state & dynamic connected branches
+  const [connectedBranches, setConnectedBranches] = useState(() => getStoredConnectedRestaurants())
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false)
+
+  // Load connected branches from Project 1 Firestore when user logs in
+  useEffect(() => {
+    if (!user?.uid) return
+    let isActive = true
+    const loadBranches = async () => {
+      try {
+        const fromDb = await getConnectedRestaurants(user.uid)
+        if (!isActive) return
+        if (fromDb && fromDb.length > 0) {
+          setConnectedBranches(fromDb)
+          setStoredConnectedRestaurants(fromDb)
+        }
+      } catch (err) {
+        console.warn('Failed to load connected branches:', err)
+      }
+    }
+    loadBranches()
+    return () => { isActive = false }
+  }, [user?.uid])
+
+  const [selectedRestaurantId, setSelectedRestaurantId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('selected_restaurant_id')
+      if (saved) return saved
+    }
+    return 'main'
+  })
+
+  const [mainRestaurantName, setMainRestaurantName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('main_restaurant_info')
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (parsed?.name) return parsed.name
+        }
+      } catch (e) {}
+    }
+    return ''
+  })
+
+  // Whenever on the main restaurant and settings/profile load, persist the main restaurant's actual name
+  useEffect(() => {
+    if (selectedRestaurantId === 'main' && restaurantSettings?.name) {
+      setMainRestaurantName(restaurantSettings.name)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('main_restaurant_info', JSON.stringify({ name: restaurantSettings.name }))
+      }
+    } else if (primaryProfile?.restaurantName && !mainRestaurantName) {
+      setMainRestaurantName(primaryProfile.restaurantName)
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('main_restaurant_info', JSON.stringify({ name: primaryProfile.restaurantName }))
+      }
+    }
+  }, [selectedRestaurantId, restaurantSettings?.name, primaryProfile?.restaurantName])
+
+  // If main restaurant name is still unknown (e.g. initial load while on a branch), fetch it from primary profile
+  useEffect(() => {
+    if (mainRestaurantName) return
+    const mainRestId = primaryProfile?.restaurantId
+    if (mainRestId) {
+      getRestaurantSettings(mainRestId).then((st) => {
+        if (st?.name) {
+          setMainRestaurantName(st.name)
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('main_restaurant_info', JSON.stringify({ name: st.name }))
+          }
+        }
+      }).catch(() => {})
+    }
+  }, [mainRestaurantName, primaryProfile?.restaurantId])
+
+  const availableRestaurants = useMemo(() => {
+    const main = getDefaultMainRestaurant()
+    const resolvedMainName =
+      (selectedRestaurantId === 'main' && restaurantSettings?.name) ||
+      mainRestaurantName ||
+      primaryProfile?.restaurantName ||
+      main.name ||
+      'Main Restaurant'
+
+    main.name = resolvedMainName
+    return [main, ...connectedBranches]
+  }, [connectedBranches, primaryProfile?.restaurantName, restaurantSettings?.name, selectedRestaurantId, mainRestaurantName])
+
+  const selectedRestaurant = useMemo(() => {
+    const found = availableRestaurants.find((r) => r.id === selectedRestaurantId) || availableRestaurants[0]
+    if (found && restaurantSettings?.name && found.id === selectedRestaurantId) {
+      return { ...found, name: restaurantSettings.name }
+    }
+    return found
+  }, [availableRestaurants, selectedRestaurantId, restaurantSettings?.name])
+
+  const handleSelectRestaurant = (newId) => {
+    if (newId === selectedRestaurantId) return
+    setIsRestaurantLoading(true)
+    setSelectedRestaurantId(newId)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('selected_restaurant_id', newId)
+    }
+  }
+
+  const handleSaveConnectedRestaurant = async (newBranch) => {
+    if (user?.uid) {
+      await saveConnectedRestaurant(user.uid, newBranch)
+    }
+    const updated = [...connectedBranches.filter((b) => b.id !== newBranch.id), newBranch]
+    setConnectedBranches(updated)
+    setStoredConnectedRestaurants(updated)
+    handleSelectRestaurant(newBranch.id)
+  }
+
+  const handleDeleteConnectedRestaurant = async (branchId) => {
+    if (user?.uid) {
+      await deleteConnectedRestaurant(user.uid, branchId)
+    }
+    const updated = connectedBranches.filter((b) => b.id !== branchId)
+    setConnectedBranches(updated)
+    setStoredConnectedRestaurants(updated)
+    if (selectedRestaurantId === branchId) {
+      handleSelectRestaurant('main')
+    }
+  }
+
+  const activeDb = useMemo(() => {
+    return getFirestoreForRestaurant(selectedRestaurant)
+  }, [selectedRestaurant])
+
+  // Load branch user profile if selected restaurant is a connected branch with a userId
+  useEffect(() => {
+    let isActive = true
+    const loadBranchProfile = async () => {
+      if (selectedRestaurant?.isDefault) {
+        setBranchProfile(null)
+        return
+      }
+      const targetUid = selectedRestaurant?.userId || null
+      if (targetUid && activeDb) {
+        try {
+          const bp = await getUserProfile(targetUid, activeDb)
+          if (isActive && bp) {
+            setBranchProfile(bp)
+            return
+          }
+        } catch (e) {
+          console.warn('Could not load branch profile:', e)
+        }
+      }
+      if (isActive) {
+        setBranchProfile(null)
+      }
+    }
+    loadBranchProfile()
+    return () => { isActive = false }
+  }, [selectedRestaurant?.id, selectedRestaurant?.userId, selectedRestaurant?.isDefault, activeDb])
+
+  const profile = useMemo(() => {
+    if (selectedRestaurant?.isDefault) {
+      return primaryProfile
+    }
+    if (branchProfile) {
+      return branchProfile
+    }
+    return {
+      ownerName: selectedRestaurant?.ownerName || restaurantSettings?.ownerName || primaryProfile?.ownerName || user?.displayName || '',
+      restaurantName: selectedRestaurant?.name,
+      restaurantId: selectedRestaurant?.restaurantId,
+      userId: selectedRestaurant?.userId || '',
+      email: branchProfile?.email || user?.email || '',
+    }
+  }, [selectedRestaurant, primaryProfile, branchProfile, restaurantSettings, user])
+
+  const restaurantId = useMemo(() => {
+    if (selectedRestaurant?.isDefault) {
+      return profile?.restaurantId || selectedRestaurant?.restaurantId || null
+    }
+    return selectedRestaurant?.restaurantId || profile?.restaurantId || null
+  }, [selectedRestaurant, profile?.restaurantId])
+
+  const activeCacheDbName = useMemo(() => {
+    return getCacheDbName(selectedRestaurant?.projectId)
+  }, [selectedRestaurant])
 
   // Waiter codes state
   const [waiterCodes, setWaiterCodes] = useState([])
@@ -1668,7 +1862,8 @@ function Editor() {
     return onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser)
       if (!currentUser) {
-        setProfile(null)
+        setPrimaryProfile(null)
+        setBranchProfile(null)
       }
     })
   }, [])
@@ -1695,7 +1890,8 @@ function Editor() {
       {
         ...restaurantSettings,
         serviceFeeEnabled: next
-      }
+      },
+      activeDb
     )
 
   }
@@ -1719,7 +1915,8 @@ function Editor() {
         {
           ...restaurantSettings,
           serviceFeePercentage: value
-        }
+        },
+        activeDb
       )
 
     }
@@ -1729,7 +1926,7 @@ function Editor() {
     let isActive = true
     const loadMenus = async () => {
       if (!restaurantId) { setSavedMenus([]); return }
-      const menu = await getRestaurantMenu(restaurantId)
+      const menu = await getRestaurantMenu(restaurantId, activeDb)
       const menus = menu ? [menu] : []
       const menusWithQr = await Promise.all(
         menus.map(async (m) => {
@@ -1752,54 +1949,90 @@ function Editor() {
     }
     loadMenus()
     return () => { isActive = false }
-  }, [restaurantId])
+  }, [restaurantId, activeDb])
+
+  const loadSettingsSeqRef = useRef(0)
+  const selectedRestaurantRef = useRef(selectedRestaurant)
+  useEffect(() => {
+    selectedRestaurantRef.current = selectedRestaurant
+  }, [selectedRestaurant])
 
   // Load restaurant settings
   useEffect(() => {
     let isActive = true
-    const loadSettings = async () => {
-      if (!restaurantId) { setRestaurantSettings(null); setIsRestaurantLoading(false); return }
-      setIsRestaurantLoading(true)
-      const settings = await getRestaurantSettings(restaurantId)
-      if (!isActive) return
-      if (settings) {
-        setRestaurantSettings(settings)
-        setTableTrackingEnabled(
-          Boolean(settings.tableTrackingEnabled)
-        )
-        setTableCount(
-          Number(settings.tableCount || 0)
-        )
-        setRoomOrderingEnabled(
-          Boolean(settings.roomOrderingEnabled)
-        )
-        setRooms(
-          Array.isArray(settings.rooms) ? settings.rooms : []
-        )
-      } else {
-        const defaults = {
-          name: '',
-          slug: '',
-          website: '',
-          isActive: true,
-          currency: 'LKR',
-          allowOnlineOrders: false,
-          serviceFeeEnabled: false,
-          serviceFeePercentage: 10,
-          tableTrackingEnabled: false,
-          tableCount: 0,
-          roomOrderingEnabled: false,
-          rooms: [],
-          appPin: '',
-        }
-        setRestaurantSettings(defaults)
-        await saveRestaurantSettings(restaurantId, defaults)
+    const seq = ++loadSettingsSeqRef.current
+
+    // Safety timeout: ensure loading spinner is ALWAYS dismissed even if network stalls
+    const safetyTimer = setTimeout(() => {
+      if (seq === loadSettingsSeqRef.current) {
+        setIsRestaurantLoading(false)
       }
-      setIsRestaurantLoading(false)
+    }, 3500)
+
+    const loadSettings = async () => {
+      if (!restaurantId) {
+        setRestaurantSettings(null)
+        clearTimeout(safetyTimer)
+        if (seq === loadSettingsSeqRef.current) {
+          setIsRestaurantLoading(false)
+        }
+        return
+      }
+      setIsRestaurantLoading(true)
+      try {
+        const settings = await getRestaurantSettings(restaurantId, activeDb)
+        if (!isActive) return
+        const fallbackName = selectedRestaurantRef.current?.name || ''
+        if (settings) {
+          const resolved = {
+            ...settings,
+            name: settings.name || fallbackName,
+          }
+          setRestaurantSettings(resolved)
+          setTableTrackingEnabled(Boolean(resolved.tableTrackingEnabled))
+          setTableCount(Number(resolved.tableCount || 0))
+          setRoomOrderingEnabled(Boolean(resolved.roomOrderingEnabled))
+          setRooms(Array.isArray(resolved.rooms) ? resolved.rooms : [])
+        } else {
+          const defaults = {
+            name: fallbackName,
+            slug: '',
+            website: '',
+            isActive: true,
+            currency: 'LKR',
+            allowOnlineOrders: false,
+            serviceFeeEnabled: false,
+            serviceFeePercentage: 10,
+            tableTrackingEnabled: false,
+            tableCount: 0,
+            roomOrderingEnabled: false,
+            rooms: [],
+            appPin: '',
+          }
+          setRestaurantSettings(defaults)
+          // Only auto-provision defaults on Firestore for the default primary restaurant
+          if (selectedRestaurantRef.current?.isDefault) {
+            await saveRestaurantSettings(restaurantId, defaults, activeDb)
+          }
+        }
+      } catch (err) {
+        console.error('Error loading restaurant settings:', err)
+      } finally {
+        clearTimeout(safetyTimer)
+        if (seq === loadSettingsSeqRef.current) {
+          setIsRestaurantLoading(false)
+        }
+      }
     }
     loadSettings()
-    return () => { isActive = false }
-  }, [restaurantId, profile])
+    return () => {
+      isActive = false
+      clearTimeout(safetyTimer)
+      if (seq === loadSettingsSeqRef.current) {
+        setIsRestaurantLoading(false)
+      }
+    }
+  }, [restaurantId, activeDb])
 
   // Load waiter codes
   useEffect(() => {
@@ -1810,7 +2043,7 @@ function Editor() {
         return
       }
       setIsWaiterCodesLoading(true)
-      const codes = await getWaiterCodes(restaurantId)
+      const codes = await getWaiterCodes(restaurantId, activeDb)
       if (isActive) {
         setWaiterCodes(codes)
         setIsWaiterCodesLoading(false)
@@ -1820,7 +2053,7 @@ function Editor() {
     return () => {
       isActive = false
     }
-  }, [restaurantId])
+  }, [restaurantId, activeDb])
 
   const handleAddWaiterCode = async (code) => {
     if (!restaurantId) return
@@ -1865,7 +2098,7 @@ function Editor() {
     const nextValue = !restaurantSettings.allowOnlineOrders
     setRestaurantSettings((c) => ({ ...c, allowOnlineOrders: nextValue }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, allowOnlineOrders: nextValue })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, allowOnlineOrders: nextValue }, activeDb)
     setIsRestaurantUpdating(false)
   }
   const handleToggleBarInventory = async () => {
@@ -1877,7 +2110,7 @@ function Editor() {
       setActiveSection('dashboard')
     }
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, updated)
+    await saveRestaurantSettings(restaurantId, updated, activeDb)
     setIsRestaurantUpdating(false)
   }
   const handleToggleTableTracking = async () => {
@@ -1895,7 +2128,8 @@ function Editor() {
     setRestaurantSettings(updated)
     await saveRestaurantSettings(
       restaurantId,
-      updated
+      updated,
+      activeDb
     )
   }
   const handleTableCountChange = async (value) => {
@@ -1910,7 +2144,8 @@ function Editor() {
     setRestaurantSettings(updated)
     await saveRestaurantSettings(
       restaurantId,
-      updated
+      updated,
+      activeDb
     )
   }
   const handleToggleRoomOrdering = async () => {
@@ -1924,7 +2159,7 @@ function Editor() {
     }
     setRestaurantSettings(updated)
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, updated)
+    await saveRestaurantSettings(restaurantId, updated, activeDb)
     setIsRestaurantUpdating(false)
   }
   const handleSaveRooms = async (updatedRooms) => {
@@ -1937,14 +2172,14 @@ function Editor() {
     }
     setRestaurantSettings(updated)
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, updated)
+    await saveRestaurantSettings(restaurantId, updated, activeDb)
     setIsRestaurantUpdating(false)
   }
   const handleCurrencyChange = async (newCurrency) => {
     if (!restaurantId || !restaurantSettings) return
     setRestaurantSettings((c) => ({ ...c, currency: newCurrency }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, currency: newCurrency })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, currency: newCurrency }, activeDb)
     setIsRestaurantUpdating(false)
   }
 
@@ -1952,7 +2187,18 @@ function Editor() {
     if (!restaurantId || !restaurantSettings) return
     setRestaurantSettings((c) => ({ ...c, name: newName }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, name: newName })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, name: newName }, activeDb)
+    if (selectedRestaurantId !== 'main') {
+      const updatedBranches = connectedBranches.map((b) =>
+        b.id === selectedRestaurantId ? { ...b, name: newName } : b
+      )
+      setConnectedBranches(updatedBranches)
+      setStoredConnectedRestaurants(updatedBranches)
+      if (user?.uid) {
+        const branchObj = updatedBranches.find((b) => b.id === selectedRestaurantId)
+        if (branchObj) saveConnectedRestaurant(user.uid, branchObj)
+      }
+    }
     setIsRestaurantUpdating(false)
   }
 
@@ -1964,14 +2210,14 @@ function Editor() {
       throw new Error('Slug cannot be empty.')
     }
 
-    const isAvailable = await isRestaurantSlugAvailable(restaurantId, normalizedSlug)
+    const isAvailable = await isRestaurantSlugAvailable(restaurantId, normalizedSlug, activeDb)
     if (!isAvailable) {
       throw new Error('This slug already exists. Please choose another one.')
     }
 
     setRestaurantSettings((c) => ({ ...c, slug: normalizedSlug }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, slug: normalizedSlug })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, slug: normalizedSlug }, activeDb)
     setIsRestaurantUpdating(false)
   }
 
@@ -1979,7 +2225,7 @@ function Editor() {
     if (!restaurantId || !restaurantSettings) return
     setRestaurantSettings((c) => ({ ...c, address: newAddress }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, address: newAddress })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, address: newAddress }, activeDb)
     setIsRestaurantUpdating(false)
   }
 
@@ -1987,7 +2233,7 @@ function Editor() {
     if (!restaurantId || !restaurantSettings) return
     setRestaurantSettings((c) => ({ ...c, phone: newPhone }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, phone: newPhone })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, phone: newPhone }, activeDb)
     setIsRestaurantUpdating(false)
   }
 
@@ -1995,7 +2241,7 @@ function Editor() {
     if (!restaurantId || !restaurantSettings) return
     setRestaurantSettings((c) => ({ ...c, website: newWebsite }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, website: newWebsite })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, website: newWebsite }, activeDb)
     setIsRestaurantUpdating(false)
   }
 
@@ -2003,15 +2249,32 @@ function Editor() {
     if (!restaurantId || !restaurantSettings) return
     setRestaurantSettings((c) => ({ ...c, appPin: newPin }))
     setIsRestaurantUpdating(true)
-    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, appPin: newPin })
+    await saveRestaurantSettings(restaurantId, { ...restaurantSettings, appPin: newPin }, activeDb)
     setIsRestaurantUpdating(false)
   }
 
   const handleDisplayNameChange = async (newDisplayName) => {
     if (!user) return
-    setProfile((c) => ({ ...c, ownerName: newDisplayName }))
     setIsRestaurantUpdating(true)
-    await saveUserProfile(user.uid, { ownerName: newDisplayName })
+    if (selectedRestaurant?.isDefault) {
+      setPrimaryProfile((c) => ({ ...c, ownerName: newDisplayName }))
+      await saveUserProfile(user.uid, { ownerName: newDisplayName })
+    } else {
+      setBranchProfile((c) => ({ ...c, ownerName: newDisplayName }))
+      const targetUid = selectedRestaurant?.userId || null
+      if (targetUid && activeDb) {
+        await saveUserProfile(targetUid, { ownerName: newDisplayName }, activeDb)
+      }
+      const updatedBranches = connectedBranches.map((b) =>
+        b.id === selectedRestaurant.id ? { ...b, ownerName: newDisplayName } : b
+      )
+      setConnectedBranches(updatedBranches)
+      setStoredConnectedRestaurants(updatedBranches)
+      if (user?.uid) {
+        const branchObj = updatedBranches.find((b) => b.id === selectedRestaurant.id)
+        if (branchObj) saveConnectedRestaurant(user.uid, branchObj)
+      }
+    }
     setIsRestaurantUpdating(false)
   }
 
@@ -2393,7 +2656,14 @@ function Editor() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <LoginModal user={user} onComplete={setProfile} />
+      <LoginModal user={user} onComplete={setPrimaryProfile} />
+      <ConnectRestaurantModal
+        isOpen={isConnectModalOpen}
+        onClose={() => setIsConnectModalOpen(false)}
+        onSave={handleSaveConnectedRestaurant}
+        connectedRestaurants={connectedBranches}
+        onDelete={handleDeleteConnectedRestaurant}
+      />
 
       {/* Sidebar */}
       <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -2406,14 +2676,21 @@ function Editor() {
         >
           <div
             className="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl border border-neutral-100 shadow-sm"
-            title={restaurantSettings?.name || 'Smart POS'}
+            title={selectedRestaurant?.name || restaurantSettings?.name || 'Smart POS'}
           >
             <img src="/assets/appicon.jpeg" alt="Smart POS Logo" className="h-full w-full object-cover" />
           </div>
           {!sidebarCollapsed && (
             <div className="min-w-0 overflow-hidden">
-              <p className="text-sm font-bold text-neutral-900 leading-tight truncate">{restaurantSettings?.name || 'Smart POS'}</p>
-              <p className="text-xs text-neutral-400 truncate">Smart POS Dashboard</p>
+              <p className="text-sm font-bold text-neutral-900 leading-tight truncate">
+                {selectedRestaurant?.name || restaurantSettings?.name || 'Smart POS'}
+              </p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className={`inline-block w-1.5 h-1.5 rounded-full ${selectedRestaurant?.isDefault ? 'bg-emerald-500' : 'bg-blue-500'}`}></span>
+                <p className="text-[11px] text-neutral-500 font-medium truncate">
+                  {selectedRestaurant?.isDefault ? 'Main Restaurant' : 'Connected Branch'}
+                </p>
+              </div>
             </div>
           )}
         </div>
@@ -2436,6 +2713,105 @@ function Editor() {
           ))}
         </nav>
 
+        {/* Restaurant Switcher */}
+        <div className="border-t p-2.5" style={{ borderColor: '#dcfce7' }}>
+          {!sidebarCollapsed ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800/80 flex items-center gap-1.5">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                    <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                  </svg>
+                  Restaurant
+                  {isRestaurantLoading && (
+                    <span className="inline-flex items-center gap-1 text-[9px] font-semibold text-emerald-700 bg-emerald-100/80 px-1.5 py-0.2 rounded">
+                      <svg className="animate-spin h-2.5 w-2.5 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Loading...
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  id="connect-restaurant-btn"
+                  onClick={() => setIsConnectModalOpen(true)}
+                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
+                    connectedBranches.length >= 1
+                      ? 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                      : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                  }`}
+                  title={connectedBranches.length >= 1 ? 'Manage connected branch (2/2 max limit)' : 'Connect another restaurant branch'}
+                >
+                  {connectedBranches.length >= 1 ? (
+                    <span>Manage</span>
+                  ) : (
+                    <>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      <span>Connect</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Attractive Custom Dropdown */}
+              <RestaurantDropdown
+                selectedRestaurant={selectedRestaurant}
+                availableRestaurants={availableRestaurants}
+                isRestaurantLoading={isRestaurantLoading}
+                onSelectRestaurant={handleSelectRestaurant}
+                onOpenConnectModal={() => setIsConnectModalOpen(true)}
+                maxLimitReached={connectedBranches.length >= 1}
+              />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1.5" title={`Active: ${selectedRestaurant.name}`}>
+              <button
+                type="button"
+                disabled={isRestaurantLoading}
+                onClick={() => {
+                  const currentIndex = availableRestaurants.findIndex((r) => r.id === selectedRestaurant.id)
+                  const nextIndex = (currentIndex + 1) % availableRestaurants.length
+                  handleSelectRestaurant(availableRestaurants[nextIndex].id)
+                }}
+                className={`flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100 transition-colors shadow-2xs ${
+                  isRestaurantLoading ? 'opacity-80 cursor-wait' : ''
+                }`}
+                title={isRestaurantLoading ? 'Switching restaurant...' : `Current: ${selectedRestaurant.name}. Click to switch.`}
+              >
+                {isRestaurantLoading ? (
+                  <svg className="animate-spin h-4 w-4 text-emerald-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                ) : (
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                    <polyline points="9 22 9 12 15 12 15 22"></polyline>
+                  </svg>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsConnectModalOpen(true)}
+                className={`flex h-6 w-6 items-center justify-center rounded-lg transition text-[11px] font-bold shadow-2xs cursor-pointer ${
+                  connectedBranches.length >= 1
+                    ? 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                    : 'bg-neutral-100 text-neutral-600 hover:bg-emerald-100 hover:text-emerald-800'
+                }`}
+                title={connectedBranches.length >= 1 ? 'Manage connected branch (2/2 max limit)' : 'Connect another restaurant branch'}
+              >
+                {connectedBranches.length >= 1 ? '⚙' : '+'}
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Bottom user info & collapse toggle button */}
         <div className="border-t p-2.5 space-y-2 mt-auto" style={{ borderColor: '#dcfce7' }}>
           {user && (
@@ -2453,8 +2829,8 @@ function Editor() {
               </div>
               {!sidebarCollapsed && (
                 <div className="min-w-0 flex-1 overflow-hidden">
-                  <p className="truncate text-xs font-bold text-neutral-900 leading-tight">{user.displayName || 'User'}</p>
-                  <p className="truncate text-[10px] text-neutral-400">{user.email}</p>
+                  <p className="truncate text-xs font-bold text-neutral-900 leading-tight">{user.displayName || profile?.ownerName || 'User'}</p>
+                  <p className="truncate text-[10px] text-emerald-700 font-semibold">{selectedRestaurant?.name || 'Main Restaurant'}</p>
                 </div>
               )}
             </div>
@@ -2508,6 +2884,8 @@ function Editor() {
         ) : (
           <>
             {activeSection === 'dashboard' && <DashboardScreen
+              key={`${selectedRestaurant.id}_${restaurantId}`}
+              selectedRestaurant={selectedRestaurant}
               profile={profile}
               restaurantSettings={restaurantSettings}
               savedMenus={savedMenus}
@@ -2520,16 +2898,23 @@ function Editor() {
               openQrPreview={openQrPreview}
             />}
             {activeSection === 'analytics' && <AnalyticsScreen
+              key={`${selectedRestaurant.id}_${restaurantId}`}
               profile={profile}
               restaurantSettings={restaurantSettings}
               restaurantId={restaurantId}
               setActiveSection={setActiveSection}
+              activeDb={activeDb}
+              cacheDbName={activeCacheDbName}
             />}
             {activeSection === 'cancelled-refunded' && <CancelledRefundedOrdersScreen
+              key={`${selectedRestaurant.id}_${restaurantId}`}
               profile={profile}
               restaurantSettings={restaurantSettings}
               restaurantId={restaurantId}
               setActiveSection={setActiveSection}
+              activeDb={activeDb}
+              activeConfig={selectedRestaurant.firebaseConfig}
+              cacheDbName={activeCacheDbName}
             />}
             {activeSection === 'inventory' && restaurantSettings?.enableBarInventory && <InventoryScreen
               profile={profile}
@@ -2550,6 +2935,8 @@ function Editor() {
               isDeletingMenu={isDeletingMenu}
             />}
             {activeSection === 'settings' && <SettingsScreen
+              key={`${selectedRestaurant.id}_${restaurantId}`}
+              selectedRestaurant={selectedRestaurant}
               restaurantSettings={restaurantSettings}
               profile={profile}
               isRestaurantLoading={isRestaurantLoading}
@@ -2585,14 +2972,18 @@ function Editor() {
               handleAppPinChange={handleAppPinChange}
             />}
             {activeSection === 'profile' && <ProfileScreen
+              key={`${selectedRestaurant.id}_${restaurantId}`}
               user={user}
               profile={profile}
+              selectedRestaurant={selectedRestaurant}
               restaurantSettings={restaurantSettings}
               restaurantId={restaurantId}
               initials={initials}
               logoutUser={logoutUser}
               isUpdating={isRestaurantUpdating}
               handleDisplayNameChange={handleDisplayNameChange}
+              handleRestaurantNameChange={handleRestaurantNameChange}
+              activeDb={activeDb}
             />}
           </>
         )}

@@ -31,9 +31,14 @@ export default function CancelledRefundedOrdersScreen({
   profile,
   restaurantSettings,
   restaurantId: propRestaurantId,
+  setActiveSection,
+  activeDb,
+  activeConfig,
+  cacheDbName,
 }) {
   const targetRestaurantId =
     propRestaurantId || profile?.restaurantId || profile?.id || null
+  const effectiveBackup = activeDb || activeConfig || profile?.backupDatabase
   const currencySymbol =
     restaurantSettings?.currency === 'LKR'
       ? 'Rs. '
@@ -104,14 +109,15 @@ export default function CancelledRefundedOrdersScreen({
           fetchCancelledAndRefundedOrders(targetRestaurantId, {
             startDate,
             endDate,
-            backupConfig: profile?.backupDatabase,
+            backupConfig: effectiveBackup,
           }),
-          fetchOpenTickets(targetRestaurantId, profile?.backupDatabase),
+          fetchOpenTickets(targetRestaurantId, effectiveBackup),
           fetchVoidLogsWithIncrementalCache(targetRestaurantId, {
             startDate,
             endDate,
-            backupConfig: profile?.backupDatabase,
+            backupConfig: effectiveBackup,
             forceRefresh: isManualRefresh,
+            cacheDbName,
           }),
         ])
 
@@ -127,7 +133,7 @@ export default function CancelledRefundedOrdersScreen({
         setRefreshing(false)
       }
     },
-    [targetRestaurantId, profile?.backupDatabase, dateFilter, customStart, customEnd]
+    [targetRestaurantId, effectiveBackup, dateFilter, customStart, customEnd, cacheDbName]
   )
 
   useEffect(() => {
@@ -145,7 +151,7 @@ export default function CancelledRefundedOrdersScreen({
         setLastUpdated(new Date())
       },
       (err) => console.warn('Open tickets live subscription:', err),
-      profile?.backupDatabase
+      effectiveBackup
     )
 
     // Real-time listener for today's newly archived voided/refunded tickets
@@ -165,7 +171,7 @@ export default function CancelledRefundedOrdersScreen({
         setLastUpdated(new Date())
       },
       (err) => console.warn('Audit records live subscription:', err),
-      profile?.backupDatabase
+      effectiveBackup
     )
 
     // Real-time listener for today's void logs (item reductions)
@@ -183,11 +189,11 @@ export default function CancelledRefundedOrdersScreen({
           })
         })
         // Automatically persist live received void logs to cache
-        saveVoidLogsToCache(targetRestaurantId, todayLogs).catch(() => {})
+        saveVoidLogsToCache(targetRestaurantId, todayLogs, cacheDbName).catch(() => {})
         setLastUpdated(new Date())
       },
       (err) => console.warn('Void logs live subscription:', err),
-      profile?.backupDatabase
+      effectiveBackup
     )
 
     return () => {

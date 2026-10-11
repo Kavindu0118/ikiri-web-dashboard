@@ -5,20 +5,34 @@ import { getOrCreateSubscription, subscribeToSubscription } from '../../lib/menu
 export default function ProfileScreen({
   user,
   profile,
+  selectedRestaurant,
   restaurantSettings,
   restaurantId,
   initials,
   logoutUser,
   isUpdating = false,
   handleDisplayNameChange,
+  handleRestaurantNameChange,
+  activeDb = null,
 }) {
+  const currentRestaurantName = selectedRestaurant?.name || restaurantSettings?.name || profile?.restaurantName || 'Main Restaurant'
+  const name = profile?.ownerName || user?.displayName || 'User'
+  const email = user?.email || ''
+
   const [editingDisplayName, setEditingDisplayName] = useState(false)
-  const [tempDisplayName, setTempDisplayName] = useState(profile?.ownerName || '')
+  const [tempDisplayName, setTempDisplayName] = useState(profile?.ownerName || user?.displayName || '')
+  const [editingRestaurantName, setEditingRestaurantName] = useState(false)
+  const [tempRestaurantName, setTempRestaurantName] = useState(currentRestaurantName)
   const [subscription, setSubscription] = useState(null)
   const [isSubLoading, setIsSubLoading] = useState(true)
 
-  const name = profile?.ownerName || user?.displayName || 'User'
-  const email = user?.email || ''
+  useEffect(() => {
+    setTempDisplayName(profile?.ownerName || user?.displayName || '')
+  }, [profile?.ownerName, user?.displayName])
+
+  useEffect(() => {
+    setTempRestaurantName(currentRestaurantName)
+  }, [currentRestaurantName])
 
   // Load / ensure subscription document exists in Firestore
   useEffect(() => {
@@ -26,18 +40,18 @@ export default function ProfileScreen({
     async function initSubscription() {
       if (restaurantId) {
         setIsSubLoading(true)
-        await getOrCreateSubscription(restaurantId, user?.uid)
+        await getOrCreateSubscription(restaurantId, user?.uid, activeDb)
         unsubscribe = subscribeToSubscription(restaurantId, (data) => {
           setSubscription(data)
           setIsSubLoading(false)
-        })
+        }, activeDb)
       } else {
         setIsSubLoading(false)
       }
     }
     initSubscription()
     return () => unsubscribe()
-  }, [restaurantId, user?.uid])
+  }, [restaurantId, user?.uid, activeDb])
 
   const handleSaveDisplayName = async () => {
     if (tempDisplayName.trim() && handleDisplayNameChange) {
@@ -47,8 +61,15 @@ export default function ProfileScreen({
   }
 
   const handleCancelDisplayName = () => {
-    setTempDisplayName(profile?.ownerName || '')
+    setTempDisplayName(profile?.ownerName || user?.displayName || '')
     setEditingDisplayName(false)
+  }
+
+  const handleSaveRestaurantNameSubmit = async () => {
+    if (tempRestaurantName.trim() && handleRestaurantNameChange) {
+      await handleRestaurantNameChange(tempRestaurantName.trim())
+      setEditingRestaurantName(false)
+    }
   }
 
   const formatDate = (val) => {
@@ -73,15 +94,35 @@ export default function ProfileScreen({
   const getStatusBadge = (status) => {
     const s = (status || 'Inactive').toLowerCase()
     if (s === 'active') {
-      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">● Active</span>
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
+          Active
+        </span>
+      )
     }
     if (s === 'trial') {
-      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">● Free Trial</span>
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+          Free Trial
+        </span>
+      )
     }
     if (s === 'pending') {
-      return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">● Pending</span>
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+          Pending
+        </span>
+      )
     }
-    return <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-600 border border-neutral-200">● Inactive</span>
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-600 border border-neutral-200">
+        <span className="w-1.5 h-1.5 rounded-full bg-neutral-400"></span>
+        Inactive
+      </span>
+    )
   }
 
   return (
@@ -91,10 +132,18 @@ export default function ProfileScreen({
 
       {/* Avatar + identity */}
       <div className="card p-6 flex items-center gap-5 mb-5">
-        <div className="avatar">{initials(name)}</div>
-        <div className="min-w-0">
-          <p className="text-xl font-bold text-neutral-900 truncate">{name}</p>
-          <p className="text-sm text-neutral-500 truncate">{email}</p>
+        <div className="avatar">{initials(name || currentRestaurantName)}</div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="text-xl font-bold text-neutral-900 truncate">{name}</p>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${selectedRestaurant?.isDefault ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>
+              {selectedRestaurant?.isDefault ? 'Main' : 'Branch'}
+            </span>
+          </div>
+          <p className="text-sm font-semibold text-emerald-700 truncate mt-0.5">
+            {currentRestaurantName}
+          </p>
+          <p className="text-xs text-neutral-400 truncate mt-0.5">{email}</p>
         </div>
       </div>
 
@@ -102,9 +151,58 @@ export default function ProfileScreen({
       <div className="card p-5 mb-5">
         <p className="text-xs font-semibold uppercase tracking-widest mb-4" style={{ color: '#16a34a' }}>Account Details</p>
         <div className="space-y-4">
+          {/* Active Restaurant Name */}
+          <div className="flex items-center justify-between gap-3 border-b border-neutral-100 py-2">
+            <span className="text-sm font-medium text-neutral-500">Active Restaurant</span>
+            {editingRestaurantName ? (
+              <div className="flex items-center gap-2">
+                <input
+                  value={tempRestaurantName}
+                  onChange={(e) => setTempRestaurantName(e.target.value)}
+                  disabled={isUpdating}
+                  className="rounded-lg border border-neutral-300 px-2 py-1 text-sm outline-none transition focus:border-green-500"
+                  placeholder="Enter restaurant name"
+                />
+                <button
+                  onClick={handleSaveRestaurantNameSubmit}
+                  disabled={isUpdating || !tempRestaurantName.trim()}
+                  className="rounded-lg bg-green-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    setTempRestaurantName(currentRestaurantName)
+                    setEditingRestaurantName(false)
+                  }}
+                  disabled={isUpdating}
+                  className="rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-700 transition hover:bg-neutral-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-emerald-800">{currentRestaurantName}</span>
+                {handleRestaurantNameChange && (
+                  <button
+                    onClick={() => {
+                      setTempRestaurantName(currentRestaurantName)
+                      setEditingRestaurantName(true)
+                    }}
+                    disabled={isUpdating}
+                    className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 transition"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Display Name */}
           <div className="flex items-center justify-between gap-3 border-b border-neutral-100 py-2">
-            <span className="text-sm font-medium text-neutral-500">Display Name</span>
+            <span className="text-sm font-medium text-neutral-500">Owner / User Name</span>
             {editingDisplayName ? (
               <div className="flex items-center gap-2">
                 <input
@@ -132,7 +230,7 @@ export default function ProfileScreen({
             ) : (
               <button
                 onClick={() => {
-                  setTempDisplayName(profile?.ownerName || '')
+                  setTempDisplayName(profile?.ownerName || user?.displayName || '')
                   setEditingDisplayName(true)
                 }}
                 disabled={isUpdating}
