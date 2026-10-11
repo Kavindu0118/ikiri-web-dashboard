@@ -564,10 +564,11 @@ export const getWaiterCodes = async (restaurantId, customDb = null) => {
   }
 }
 
-export const addWaiterCode = async (restaurantId, code) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return false
+export const addWaiterCode = async (restaurantId, code, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return false
   try {
-    const docRef = doc(db, 'waiterCodes', restaurantId)
+    const docRef = doc(firestore, 'waiterCodes', restaurantId)
     await setDoc(docRef, { [code]: false }, { merge: true })
     return true
   } catch (error) {
@@ -576,10 +577,11 @@ export const addWaiterCode = async (restaurantId, code) => {
   }
 }
 
-export const deleteWaiterCode = async (restaurantId, code) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return false
+export const deleteWaiterCode = async (restaurantId, code, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return false
   try {
-    const docRef = doc(db, 'waiterCodes', restaurantId)
+    const docRef = doc(firestore, 'waiterCodes', restaurantId)
     await updateDoc(docRef, { [code]: deleteField() })
     return true
   } catch (error) {
@@ -588,10 +590,11 @@ export const deleteWaiterCode = async (restaurantId, code) => {
   }
 }
 
-export const validateWaiterCode = async (restaurantId, code) => {
-  if (!isFirebaseConfigured || !db || !restaurantId || !code) return false
+export const validateWaiterCode = async (restaurantId, code, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId || !code) return false
   try {
-    const docRef = doc(db, 'waiterCodes', restaurantId)
+    const docRef = doc(firestore, 'waiterCodes', restaurantId)
     const snap = await getDoc(docRef)
     if (!snap.exists()) return false
     const data = snap.data() || {}

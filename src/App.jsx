@@ -2060,9 +2060,9 @@ function Editor() {
   const handleAddWaiterCode = async (code) => {
     if (!restaurantId) return
     setIsWaiterCodesUpdating(true)
-    const success = await addWaiterCode(restaurantId, code)
+    const success = await addWaiterCode(restaurantId, code, activeDb)
     if (success) {
-      const updated = await getWaiterCodes(restaurantId)
+      const updated = await getWaiterCodes(restaurantId, activeDb)
       setWaiterCodes(updated)
     } else {
       alert('Failed to add waiter code.')
@@ -2073,9 +2073,9 @@ function Editor() {
   const handleDeleteWaiterCode = async (code) => {
     if (!restaurantId) return
     setIsWaiterCodesUpdating(true)
-    const success = await deleteWaiterCode(restaurantId, code)
+    const success = await deleteWaiterCode(restaurantId, code, activeDb)
     if (success) {
-      const updated = await getWaiterCodes(restaurantId)
+      const updated = await getWaiterCodes(restaurantId, activeDb)
       setWaiterCodes(updated)
     } else {
       alert('Failed to delete waiter code.')
