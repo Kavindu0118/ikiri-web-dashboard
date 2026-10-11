@@ -2,6 +2,7 @@ import Toggle from '../Toggle'
 import { useState, useEffect } from 'react'
 import QRCode from 'qrcode'
 import { IconTrash, IconLock, IconEye, IconQr } from '../Icons'
+import { getRestaurantBaseUrl } from '../../config/restaurants'
 
 export default function SettingsScreen({
   restaurantSettings,
@@ -76,7 +77,8 @@ export default function SettingsScreen({
 
   const getWaiterUrl = (code) => {
     const slug = restaurantSettings?.slug || savedMenus?.[0]?.remoteId || savedMenus?.[0]?.slug || ''
-    return `${window.location.origin}/menu/${slug}?waiter=${encodeURIComponent(code)}`
+    const baseUrl = getRestaurantBaseUrl(selectedRestaurant)
+    return `${baseUrl}/menu/${slug}?waiter=${encodeURIComponent(code)}`
   }
 
   const handleCopyWaiterUrl = (code) => {

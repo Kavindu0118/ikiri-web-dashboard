@@ -9,6 +9,34 @@
 
 const STORAGE_KEY = 'connected_restaurants_list'
 
+export const SECONDARY_RESTAURANT_URL = 'https://kara-web-dashboard.vercel.app'
+
+/**
+ * Checks whether the given restaurant is the secondary / connected restaurant.
+ */
+export const isSecondaryRestaurant = (restaurant) => {
+  if (!restaurant) return false
+  if (restaurant.isDefault === false) return true
+  if (restaurant.id && restaurant.id !== 'main') return true
+  const secondaryProjectId = import.meta.env.VITE_RESTAURANT2_PROJECT_ID || 'kara-25d0c'
+  if (restaurant.projectId && restaurant.projectId === secondaryProjectId) return true
+  return false
+}
+
+/**
+ * Resolves the base URL for menu links and QR codes.
+ * Returns https://kara-web-dashboard.vercel.app for the second / connected restaurant,
+ * and window.location.origin for the main restaurant.
+ */
+export const getRestaurantBaseUrl = (restaurant = null) => {
+  if (isSecondaryRestaurant(restaurant)) {
+    const customUrl = import.meta.env.VITE_RESTAURANT2_URL
+    return (customUrl || SECONDARY_RESTAURANT_URL).replace(/\/+$/, '')
+  }
+  return typeof window !== 'undefined' ? window.location.origin : ''
+}
+
+
 export const getDefaultMainRestaurant = () => {
   let cachedName = 'Main Restaurant'
   if (typeof window !== 'undefined') {

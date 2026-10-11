@@ -2,7 +2,7 @@ import LoginModal from './LoginModal'
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { Routes, Route, useParams, useSearchParams } from 'react-router-dom'
 import { auth, signInWithGoogle, logoutUser, getFirestoreForRestaurant } from './lib/firebase'
-import { getDefaultMainRestaurant, getStoredConnectedRestaurants, setStoredConnectedRestaurants } from './config/restaurants'
+import { getDefaultMainRestaurant, getStoredConnectedRestaurants, setStoredConnectedRestaurants, getRestaurantBaseUrl } from './config/restaurants'
 import { getCacheDbName } from './lib/ordersIdbCache'
 import ConnectRestaurantModal from './components/ConnectRestaurantModal'
 import RestaurantDropdown from './components/RestaurantDropdown'
@@ -1928,19 +1928,21 @@ function Editor() {
       if (!restaurantId) { setSavedMenus([]); return }
       const menu = await getRestaurantMenu(restaurantId, activeDb)
       const menus = menu ? [menu] : []
+      const baseUrl = getRestaurantBaseUrl(selectedRestaurant)
       const menusWithQr = await Promise.all(
         menus.map(async (m) => {
           const slug = m.slug || m.id
           const targetUrl =
             restaurantSettings?.tableTrackingEnabled
               ?
-              `${window.location.origin}/menu/${slug}/tableNo-1`
+              `${baseUrl}/menu/${slug}/tableNo-1`
               :
-              `${window.location.origin}/menu/${slug}`
-          let qrDataUrl = m.qrDataUrl || ''
-          if (!qrDataUrl) {
-            try { qrDataUrl = await QRCode.toDataURL(targetUrl, { width: 320, margin: 1, color: { dark: '#101010', light: '#ffffff' } }) }
-            catch { qrDataUrl = '' }
+              `${baseUrl}/menu/${slug}`
+          let qrDataUrl = ''
+          try {
+            qrDataUrl = await QRCode.toDataURL(targetUrl, { width: 320, margin: 1, color: { dark: '#101010', light: '#ffffff' } })
+          } catch {
+            qrDataUrl = m.qrDataUrl || ''
           }
           return { localId: m.id || slug, ...m, qrDataUrl, remoteSaved: true, remoteId: slug, savedAt: m.savedAt || m.updatedAt || new Date().toISOString() }
         })
@@ -1949,7 +1951,7 @@ function Editor() {
     }
     loadMenus()
     return () => { isActive = false }
-  }, [restaurantId, activeDb])
+  }, [restaurantId, activeDb, selectedRestaurant, restaurantSettings?.tableTrackingEnabled])
 
   const loadSettingsSeqRef = useRef(0)
   const selectedRestaurantRef = useRef(selectedRestaurant)
@@ -2500,7 +2502,8 @@ function Editor() {
       remoteSaved = false
       remoteId = restaurantSettings?.slug || restaurantId
     }
-    const targetUrl = `${window.location.origin}/menu/${remoteId || restaurantId}`
+    const baseUrl = getRestaurantBaseUrl(selectedRestaurant)
+    const targetUrl = `${baseUrl}/menu/${remoteId || restaurantId}`
     try {
       qrDataUrl = await QRCode.toDataURL(targetUrl, { width: 320, margin: 1, color: { dark: '#101010', light: '#ffffff' } })
     } catch {
@@ -2520,6 +2523,11 @@ function Editor() {
   }
   const openQrPreview = async (menu) => {
     const slug = menu.remoteId || menu.slug
+    const branchMatch = connectedBranches.find(
+      (b) => b.restaurantId === menu.restaurantId || b.id === menu.restaurantId || b.id === menu.remoteId
+    )
+    const targetRestaurant = branchMatch || selectedRestaurant
+    const baseUrl = getRestaurantBaseUrl(targetRestaurant)
     let qrList = []
 
     // 1. Always include Main Menu QR
@@ -2528,7 +2536,7 @@ function Editor() {
       table: null,
       room: null,
       label: 'Main Menu QR',
-      url: `${window.location.origin}/menu/${slug}`
+      url: `${baseUrl}/menu/${slug}`
     })
 
     // 2. Table QR codes if table tracking is enabled
@@ -2539,7 +2547,7 @@ function Editor() {
           table: i,
           room: null,
           label: `Table ${i}`,
-          url: `${window.location.origin}/menu/${slug}/tableNo-${i}`
+          url: `${baseUrl}/menu/${slug}/tableNo-${i}`
         })
       }
     }
@@ -2553,7 +2561,7 @@ function Editor() {
           room: rm.number,
           token: rm.token,
           label: `Room ${rm.number}`,
-          url: `${window.location.origin}/menu/${slug}?rk=${rm.token}`
+          url: `${baseUrl}/menu/${slug}?rk=${rm.token}`
         })
       })
     }
@@ -2567,7 +2575,7 @@ function Editor() {
           room: null,
           waiter: wc.code,
           label: `Waiter: ${wc.code}`,
-          url: `${window.location.origin}/menu/${slug}?waiter=${encodeURIComponent(wc.code)}`
+          url: `${baseUrl}/menu/${slug}?waiter=${encodeURIComponent(wc.code)}`
         })
       })
     }
@@ -2589,7 +2597,12 @@ function Editor() {
   const openMenuPreview = (menu) => {
     const slug = menu.remoteId || menu.slug
     if (!slug) { setSaveStatus('Save the menu first to preview.'); return }
-    window.open(`${window.location.origin}/menu/${slug}`, '_blank', 'noopener')
+    const branchMatch = connectedBranches.find(
+      (b) => b.restaurantId === menu.restaurantId || b.id === menu.restaurantId || b.id === menu.remoteId
+    )
+    const targetRestaurant = branchMatch || selectedRestaurant
+    const baseUrl = getRestaurantBaseUrl(targetRestaurant)
+    window.open(`${baseUrl}/menu/${slug}`, '_blank', 'noopener')
   }
 
   const loadMenuForEditing = (menu) => {
