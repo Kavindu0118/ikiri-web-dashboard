@@ -1470,101 +1470,119 @@ export default function CancelledRefundedOrdersScreen({
               </button>
             </div>
 
-            {/* If table group with multiple tickets: tabs bar */}
-            {selectedRecord.isTableGroup && (selectedRecord.tickets?.length || 0) > 1 && (
-              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-neutral-100 bg-neutral-50/60 overflow-x-auto">
-                <button
-                  type="button"
-                  onClick={() => setActiveTicketTab('all')}
-                  className={`px-3 py-1 rounded-full text-xs font-bold transition whitespace-nowrap ${activeTicketTab === 'all'
-                      ? 'bg-neutral-900 text-white shadow-2xs'
-                      : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-100'
-                    }`}
-                >
-                  All Tickets ({selectedRecord.tickets.length})
-                </button>
-                {selectedRecord.tickets.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setActiveTicketTab(t.id)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold transition whitespace-nowrap ${activeTicketTab === t.id
-                        ? 'bg-red-600 text-white shadow-2xs'
-                        : 'bg-white text-neutral-600 border border-neutral-200 hover:bg-neutral-100'
-                      }`}
-                  >
-                    {t.displayId} ({currencySymbol}{Number(t.total || 0).toFixed(0)})
-                  </button>
-                ))}
-              </div>
-            )}
-
             {/* Modal Body */}
             <div className="p-5 overflow-y-auto space-y-4 text-xs">
               {selectedRecord.isTableGroup ? (
-                // ── TABLE GROUP (Displays all tickets for table) ──
-                <div className="space-y-4">
-                  {(
-                    activeTicketTab === 'all' ||
-                      !selectedRecord.tickets.some((t) => t.id === activeTicketTab)
-                      ? selectedRecord.tickets
-                      : selectedRecord.tickets.filter((t) => t.id === activeTicketTab)
-                  ).map((ticket, tIdx) => {
-                    const ticketVoidLogs = getTicketVoidLogs(ticket)
-                    return (
-                      <div
-                        key={ticket.id || tIdx}
-                        className="p-3.5 bg-neutral-50/80 rounded-2xl border border-neutral-200/80 space-y-3"
-                      >
-                        {/* Ticket header */}
-                        <div className="flex items-center justify-between pb-2 border-b border-neutral-200/60">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-neutral-900 text-white font-mono">
-                              {ticket.displayId}
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-neutral-200/90 text-neutral-800 border border-neutral-300/60">
-                              Source: {getOrderSourceText(ticket)}
-                            </span>
-                            <span className="text-[11px] text-neutral-500">
-                              {formatDate(ticket.date)} at {formatTime(ticket.date)}
-                            </span>
+                // ── TABLE GROUP (Displays all items of the table directly) ──
+                (() => {
+                  const directItemsMap = new Map()
+                  selectedRecord.tickets?.forEach((ticket) => {
+                    (ticket.items || []).forEach((item) => {
+                      const name = (item.name || item.title || 'Item').trim()
+                      const price = Number(item.price || item.unitPrice || 0)
+                      const qty = Number(item.qty || item.quantity || 1)
+                      const note = (item.note || item.specialNote || '').trim()
+                      const key = `${name}___${price}___${note}`
+                      if (directItemsMap.has(key)) {
+                        const existing = directItemsMap.get(key)
+                        existing.qty += qty
+                        existing.total += qty * price
+                      } else {
+                        directItemsMap.set(key, {
+                          name,
+                          price,
+                          qty,
+                          note,
+                          total: qty * price,
+                        })
+                      }
+                    })
+                  })
+                  const directItems = Array.from(directItemsMap.values())
+                  const totalItemsCount = directItems.reduce((sum, it) => sum + it.qty, 0)
+                  const tableVoidLogs = selectedRecord.tickets?.flatMap((t) => getTicketVoidLogs(t)) || []
+
+                  const auditNotes = selectedRecord.tickets
+                    ?.map((t) => t.voidReason || t.note)
+                    .filter((n) => n && n.trim().length > 0)
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Meta Information Bar */}
+                      <div className="grid grid-cols-3 gap-2.5 p-3 bg-neutral-50 rounded-xl border border-neutral-100 text-[11px]">
+                        <div>
+                          <span className="text-neutral-400 block">Location</span>
+                          <span className="font-bold text-neutral-800">
+                            Table #{selectedRecord.tableNumber}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-neutral-400 block">Tickets</span>
+                          <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                            {selectedRecord.tickets?.map((t) => (
+                              <span
+                                key={t.id}
+                                className="px-1.5 py-0.5 rounded font-mono font-bold text-[10px] bg-neutral-200/90 text-neutral-800"
+                              >
+                                {t.displayId}
+                              </span>
+                            ))}
                           </div>
-                          <span className="font-mono font-extrabold text-neutral-900 text-sm">
-                            {currencySymbol}{Number(ticket.total || 0).toFixed(2)}
+                        </div>
+                        <div>
+                          <span className="text-neutral-400 block">Status</span>
+                          <span className="font-bold text-blue-600">OPEN</span>
+                        </div>
+                      </div>
+
+                      {/* Notes / Special Instructions if any */}
+                      {auditNotes && auditNotes.length > 0 && (
+                        <div className="p-3 bg-red-50/80 border border-red-200 rounded-xl space-y-1">
+                          <span className="text-[10px] text-red-600 font-bold uppercase block">
+                            Audit Notes / Reason
+                          </span>
+                          {auditNotes.map((noteText, idx) => (
+                            <p key={idx} className="font-medium text-red-900 text-xs">
+                              • {noteText}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Direct All Table Items List */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-neutral-700 text-xs block">
+                            All Table Items
+                          </span>
+                          <span className="text-[11px] font-semibold text-neutral-500">
+                            {totalItemsCount} {totalItemsCount === 1 ? 'item' : 'items'}
                           </span>
                         </div>
 
-                        {/* Note / Reason if any */}
-                        {(ticket.voidReason || ticket.note) && (
-                          <div className="p-2.5 bg-red-50/80 border border-red-200 rounded-xl">
-                            <span className="text-[10px] text-red-600 font-bold uppercase block mb-0.5">
-                              Audit Note / Reason
-                            </span>
-                            <p className="font-medium text-red-900 text-xs">
-                              {ticket.voidReason || ticket.note}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Active Items */}
-                        {ticket.items && ticket.items.length > 0 ? (
+                        {directItems.length > 0 ? (
                           <div className="rounded-xl border border-neutral-200 divide-y divide-neutral-100 overflow-hidden bg-white">
-                            {ticket.items.map((item, idx) => (
+                            {directItems.map((item, idx) => (
                               <div
                                 key={idx}
-                                className="p-2.5 flex justify-between items-center text-xs"
+                                className="p-2.5 flex justify-between items-center text-xs hover:bg-neutral-50/50 transition"
                               >
                                 <div>
                                   <span className="font-bold text-neutral-800">
-                                    {item.qty || item.quantity || 1}x{' '}
+                                    {item.qty}x{' '}
                                   </span>
-                                  <span className="text-neutral-900">{item.name || 'Item'}</span>
+                                  <span className="text-neutral-900 font-medium">
+                                    {item.name}
+                                  </span>
+                                  {item.note && (
+                                    <span className="text-[10px] text-amber-700 block italic mt-0.5">
+                                      Note: {item.note}
+                                    </span>
+                                  )}
                                 </div>
                                 <span className="font-mono font-semibold text-neutral-700">
                                   {currencySymbol}
-                                  {(
-                                    (item.price || 0) * (item.qty || item.quantity || 1)
-                                  ).toFixed(2)}
+                                  {item.total.toFixed(2)}
                                 </span>
                               </div>
                             ))}
@@ -1574,72 +1592,67 @@ export default function CancelledRefundedOrdersScreen({
                             No item details recorded
                           </p>
                         )}
-
-                        {/* VOIDED / REMOVED ITEMS FOR THIS TICKET (IF ANY) */}
-                        {ticketVoidLogs.length > 0 && (
-                          <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1">
-                                <IconAlertTriangle />
-                                Voided / Removed Items ({ticketVoidLogs.length})
-                              </span>
-                              <span className="text-[10px] font-mono font-bold text-purple-700">
-                                -{currencySymbol}
-                                {ticketVoidLogs
-                                  .reduce((sum, l) => sum + Number(l.totalAmount || 0), 0)
-                                  .toFixed(2)}
-                              </span>
-                            </div>
-                            <div className="divide-y divide-purple-100 bg-white rounded-lg border border-purple-200/70 overflow-hidden">
-                              {ticketVoidLogs.map((log) => (
-                                <div key={log.id} className="p-2 text-xs flex justify-between items-start gap-2">
-                                  <div>
-                                    <div className="font-bold text-neutral-900 text-[11px]">
-                                      <span className="text-purple-700 font-extrabold">{log.qtyVoided}x </span>
-                                      {log.itemName}
-                                      <span className="text-[10px] text-neutral-400 ml-1.5 font-normal">
-                                        ({log.previousQty} → {log.remainingQty})
-                                      </span>
-                                    </div>
-                                    <p className="text-[10px] text-purple-700 mt-0.5">
-                                      Reason: {log.voidReason}
-                                    </p>
-                                  </div>
-                                  <span className="font-mono font-semibold text-purple-700 text-xs whitespace-nowrap">
-                                    -{currencySymbol}{Number(log.totalAmount || 0).toFixed(2)}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </div>
-                    )
-                  })}
 
-                  {/* Combined Total Summary */}
-                  <div className="flex justify-between items-baseline pt-3 border-t border-neutral-200">
-                    <div>
-                      <span className="font-bold text-sm text-neutral-900">
-                        {activeTicketTab === 'all' && selectedRecord.tickets.length > 1
-                          ? 'Combined Table Total:'
-                          : 'Ticket Total:'}
-                      </span>
-                      {activeTicketTab === 'all' && selectedRecord.tickets.length > 1 && (
-                        <span className="text-[11px] text-neutral-500 ml-1.5 font-medium">
-                          ({selectedRecord.tickets.length} tickets)
-                        </span>
+                      {/* Voided / Removed Items (if any on this table) */}
+                      {tableVoidLogs.length > 0 && (
+                        <div className="p-3 bg-purple-50/80 border border-purple-200 rounded-xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1">
+                              <IconAlertTriangle />
+                              Voided / Removed Items ({tableVoidLogs.length})
+                            </span>
+                            <span className="text-[10px] font-mono font-bold text-purple-700">
+                              -{currencySymbol}
+                              {tableVoidLogs
+                                .reduce((sum, l) => sum + Number(l.totalAmount || 0), 0)
+                                .toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="divide-y divide-purple-100 bg-white rounded-lg border border-purple-200/70 overflow-hidden">
+                            {tableVoidLogs.map((log) => (
+                              <div key={log.id} className="p-2 text-xs flex justify-between items-start gap-2">
+                                <div>
+                                  <div className="font-bold text-neutral-900 text-[11px]">
+                                    <span className="text-purple-700 font-extrabold">{log.qtyVoided}x </span>
+                                    {log.itemName}
+                                    <span className="text-[10px] text-neutral-400 ml-1.5 font-normal">
+                                      ({log.previousQty} → {log.remainingQty})
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-purple-700 mt-0.5">
+                                    Reason: {log.voidReason}
+                                  </p>
+                                </div>
+                                <span className="font-mono font-semibold text-purple-700 text-xs whitespace-nowrap">
+                                  -{currencySymbol}{Number(log.totalAmount || 0).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
+
+                      {/* Total */}
+                      <div className="flex justify-between items-baseline pt-3 border-t border-neutral-200">
+                        <div>
+                          <span className="font-bold text-sm text-neutral-900">
+                            Total:
+                          </span>
+                          {selectedRecord.tickets?.length > 1 && (
+                            <span className="text-[11px] text-neutral-500 ml-1.5 font-medium">
+                              ({selectedRecord.tickets.length} tickets combined)
+                            </span>
+                          )}
+                        </div>
+                        <span className="font-mono text-base font-extrabold text-neutral-900">
+                          {currencySymbol}
+                          {Number(selectedRecord.total || 0).toFixed(2)}
+                        </span>
+                      </div>
                     </div>
-                    <span className="font-mono text-base font-extrabold text-neutral-900">
-                      {currencySymbol}
-                      {(activeTicketTab === 'all'
-                        ? selectedRecord.total
-                        : selectedRecord.tickets.find((t) => t.id === activeTicketTab)?.total || 0
-                      ).toFixed(2)}
-                    </span>
-                  </div>
-                </div>
+                  )
+                })()
               ) : selectedRecord.isVoidLog || selectedRecord.status === 'ITEM_VOID' ? (
                 // ── DEDICATED ITEM VOID AUDIT MODAL ──
                 <div className="space-y-4">

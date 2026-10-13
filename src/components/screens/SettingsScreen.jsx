@@ -376,9 +376,13 @@ export default function SettingsScreen({
           </div>
 
           {/* Menu Slug */}
-          <div className="flex justify-between items-center py-2 border-b border-neutral-100">
+          <div className="flex justify-between items-center py-2.5 border-b border-neutral-100">
             <span className="text-sm font-medium text-neutral-600">Menu Slug</span>
-            {editingSlug ? (
+            {restaurantSettings?.slug ? (
+              <span className="font-mono text-sm font-semibold text-neutral-700 bg-neutral-100/90 px-2.5 py-1 rounded-md border border-neutral-200">
+                {restaurantSettings.slug}
+              </span>
+            ) : editingSlug ? (
               <div className="flex flex-col items-end gap-2">
                 <div className="flex items-center gap-2">
                   <input
@@ -411,14 +415,14 @@ export default function SettingsScreen({
             ) : (
               <button
                 onClick={() => {
-                  setTempSlug(restaurantSettings?.slug || '')
+                  setTempSlug('')
                   setSlugError('')
                   setEditingSlug(true)
                 }}
                 disabled={isRestaurantLoading || isRestaurantUpdating}
-                className="font-mono text-sm text-neutral-700 hover:text-green-600 transition disabled:opacity-60"
+                className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 border border-emerald-300 hover:bg-emerald-50 rounded-lg px-2.5 py-1 transition disabled:opacity-60"
               >
-                {restaurantSettings?.slug || '—'}
+                + Set Menu Slug
               </button>
             )}
           </div>

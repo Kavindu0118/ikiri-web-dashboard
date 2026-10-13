@@ -40,7 +40,6 @@ import {
   getWaiterCodes,
   addWaiterCode,
   deleteWaiterCode,
-  validateWaiterCode,
   getConnectedRestaurants,
   saveConnectedRestaurant,
   deleteConnectedRestaurant,
@@ -1519,7 +1518,17 @@ function BuilderInlinePanel({ draftMenu, saveMenu, isSaving, setShowBuilder, sav
 
 function Editor() {
   const [user, setUser] = useState(null)
-  const [primaryProfile, setPrimaryProfile] = useState(null)
+  const [isAuthChecking, setIsAuthChecking] = useState(true)
+  const [isInitialAppLoading, setIsInitialAppLoading] = useState(true)
+  const [primaryProfile, setPrimaryProfile] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('cached_primary_profile')
+        if (cached) return JSON.parse(cached)
+      } catch {}
+    }
+    return null
+  })
   const [branchProfile, setBranchProfile] = useState(null)
   const [activeSection, setActiveSection] = useState('dashboard')
   const [showBuilder, setShowBuilder] = useState(false)
@@ -1712,9 +1721,12 @@ function Editor() {
   // Whenever on the main restaurant and settings/profile load, persist the main restaurant's actual name
   useEffect(() => {
     if (selectedRestaurantId === 'main' && restaurantSettings?.name) {
-      setMainRestaurantName(restaurantSettings.name)
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('main_restaurant_info', JSON.stringify({ name: restaurantSettings.name }))
+      const isActuallyMain = !restaurantSettings.id || restaurantSettings.id === primaryProfile?.restaurantId
+      if (isActuallyMain) {
+        setMainRestaurantName(restaurantSettings.name)
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('main_restaurant_info', JSON.stringify({ name: restaurantSettings.name }))
+        }
       }
     } else if (primaryProfile?.restaurantName && !mainRestaurantName) {
       setMainRestaurantName(primaryProfile.restaurantName)
@@ -1722,7 +1734,7 @@ function Editor() {
         localStorage.setItem('main_restaurant_info', JSON.stringify({ name: primaryProfile.restaurantName }))
       }
     }
-  }, [selectedRestaurantId, restaurantSettings?.name, primaryProfile?.restaurantName])
+  }, [selectedRestaurantId, restaurantSettings, primaryProfile?.restaurantName, primaryProfile?.restaurantId])
 
   // If main restaurant name is still unknown (e.g. initial load while on a branch), fetch it from primary profile
   useEffect(() => {
@@ -1764,6 +1776,11 @@ function Editor() {
   const handleSelectRestaurant = (newId) => {
     if (newId === selectedRestaurantId) return
     setIsRestaurantLoading(true)
+    setRestaurantSettings(null)
+    setTableTrackingEnabled(false)
+    setTableCount(0)
+    setRoomOrderingEnabled(false)
+    setRooms([])
     setSelectedRestaurantId(newId)
     if (typeof window !== 'undefined') {
       localStorage.setItem('selected_restaurant_id', newId)
@@ -1856,17 +1873,53 @@ function Editor() {
   const [isWaiterCodesLoading, setIsWaiterCodesLoading] = useState(false)
   const [isWaiterCodesUpdating, setIsWaiterCodesUpdating] = useState(false)
 
+  // Safety timeout: ensure full-screen loading cover is dismissed within 4 seconds max
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsInitialAppLoading(false)
+    }, 4000)
+    return () => clearTimeout(timer)
+  }, [])
+
   // Auth
   useEffect(() => {
-    if (!auth) return
-    return onAuthStateChanged(auth, (currentUser) => {
+    if (!auth) {
+      setIsAuthChecking(false)
+      setIsInitialAppLoading(false)
+      return
+    }
+    return onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser)
+      setIsAuthChecking(false)
       if (!currentUser) {
         setPrimaryProfile(null)
         setBranchProfile(null)
+        setIsInitialAppLoading(false)
+        try {
+          localStorage.removeItem('cached_primary_profile')
+        } catch {}
+      } else {
+        // If profile was not cached in localStorage, fetch from Firestore with email fallback
+        try {
+          const prof = await getUserProfile(currentUser.uid, null, currentUser.email)
+          if (prof?.restaurantId) {
+            handleCompletePrimaryProfile(prof)
+          }
+        } catch (e) {
+          console.warn('Initial profile fetch in onAuthStateChanged:', e)
+        }
       }
     })
   }, [])
+
+  const handleCompletePrimaryProfile = (data) => {
+    setPrimaryProfile(data)
+    if (data && typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('cached_primary_profile', JSON.stringify(data))
+      } catch {}
+    }
+  }
 
   //toggle service fee
   const handleToggleServiceFee = async () => {
@@ -1969,7 +2022,7 @@ function Editor() {
       if (seq === loadSettingsSeqRef.current) {
         setIsRestaurantLoading(false)
       }
-    }, 3500)
+    }, 10000)
 
     const loadSettings = async () => {
       if (!restaurantId) {
@@ -1977,6 +2030,9 @@ function Editor() {
         clearTimeout(safetyTimer)
         if (seq === loadSettingsSeqRef.current) {
           setIsRestaurantLoading(false)
+          if (!isAuthChecking) {
+            setIsInitialAppLoading(false)
+          }
         }
         return
       }
@@ -2012,10 +2068,6 @@ function Editor() {
             appPin: '',
           }
           setRestaurantSettings(defaults)
-          // Only auto-provision defaults on Firestore for the default primary restaurant
-          if (selectedRestaurantRef.current?.isDefault) {
-            await saveRestaurantSettings(restaurantId, defaults, activeDb)
-          }
         }
       } catch (err) {
         console.error('Error loading restaurant settings:', err)
@@ -2023,6 +2075,7 @@ function Editor() {
         clearTimeout(safetyTimer)
         if (seq === loadSettingsSeqRef.current) {
           setIsRestaurantLoading(false)
+          setIsInitialAppLoading(false)
         }
       }
     }
@@ -2032,9 +2085,10 @@ function Editor() {
       clearTimeout(safetyTimer)
       if (seq === loadSettingsSeqRef.current) {
         setIsRestaurantLoading(false)
+        setIsInitialAppLoading(false)
       }
     }
-  }, [restaurantId, activeDb])
+  }, [restaurantId, activeDb, isAuthChecking])
 
   // Load waiter codes
   useEffect(() => {
@@ -2206,6 +2260,11 @@ function Editor() {
 
   const handleSlugChange = async (newSlug) => {
     if (!restaurantId || !restaurantSettings) return
+
+    // Prevent changing slug once it is already set
+    if (restaurantSettings.slug && restaurantSettings.slug.trim()) {
+      throw new Error('Menu slug is permanent and cannot be changed once set.')
+    }
 
     const normalizedSlug = (newSlug || '').trim().toLowerCase()
     if (!normalizedSlug) {
@@ -2669,7 +2728,28 @@ function Editor() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <LoginModal user={user} onComplete={setPrimaryProfile} />
+      {/* Full-screen circular progress indicator covering entire screen on refresh */}
+      {isInitialAppLoading && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/95 backdrop-blur-md">
+          <div className="flex flex-col items-center gap-4">
+            <div className="mx-auto mb-2 flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border border-neutral-100 shadow-md">
+              <img src="/assets/appicon.jpeg" alt="Smart POS" className="h-full w-full object-cover" />
+            </div>
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-emerald-600 border-t-transparent shadow-xs" />
+            <p className="text-xs font-semibold text-neutral-600 animate-pulse tracking-wide">
+              Loading restaurant profile…
+            </p>
+          </div>
+        </div>
+      )}
+
+      <LoginModal
+        user={user}
+        isAuthChecking={isAuthChecking || isInitialAppLoading}
+        cachedProfile={primaryProfile}
+        onComplete={handleCompletePrimaryProfile}
+        onNeedsOnboarding={() => setIsInitialAppLoading(false)}
+      />
       <ConnectRestaurantModal
         isOpen={isConnectModalOpen}
         onClose={() => setIsConnectModalOpen(false)}
@@ -2753,7 +2833,7 @@ function Editor() {
                   onClick={() => setIsConnectModalOpen(true)}
                   className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition cursor-pointer ${
                     connectedBranches.length >= 1
-                      ? 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+                      ? 'text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50'
                       : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                   }`}
                   title={connectedBranches.length >= 1 ? 'Manage connected branch (2/2 max limit)' : 'Connect another restaurant branch'}
@@ -2825,32 +2905,9 @@ function Editor() {
           )}
         </div>
 
-        {/* Bottom user info & collapse toggle button */}
-        <div className="border-t p-2.5 space-y-2 mt-auto" style={{ borderColor: '#dcfce7' }}>
-          {user && (
-            <div
-              className={`flex items-center gap-2.5 py-1 ${
-                sidebarCollapsed ? 'justify-center px-0' : 'px-1.5'
-              }`}
-              title={sidebarCollapsed ? (user.displayName || user.email || 'User') : undefined}
-            >
-              <div
-                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white shadow-2xs"
-                style={{ background: 'linear-gradient(135deg, #16a34a, #4ade80)' }}
-              >
-                {initials(user.displayName || profile?.ownerName || 'U')}
-              </div>
-              {!sidebarCollapsed && (
-                <div className="min-w-0 flex-1 overflow-hidden">
-                  <p className="truncate text-xs font-bold text-neutral-900 leading-tight">{user.displayName || profile?.ownerName || 'User'}</p>
-                  <p className="truncate text-[10px] text-emerald-700 font-semibold">{selectedRestaurant?.name || 'Main Restaurant'}</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Collapse / Expand Toggle Button */}
-          <div className="pt-1 border-t border-emerald-100/70">
+        {/* Collapse toggle button */}
+        <div className="border-t p-2.5 mt-auto" style={{ borderColor: '#dcfce7' }}>
+          <div>
             <button
               type="button"
               id="sidebar-toggle-btn"
@@ -3115,55 +3172,6 @@ const getCurrencySymbol = (priceStr) => {
   return match ? match[1] : '$'
 }
 
-const getTodayDateString = () => {
-  const d = new Date()
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-const getWaiterStorageKey = (restaurantId, code) => {
-  return `waiter_val_${restaurantId}_${code}`
-}
-
-const checkCachedWaiterValidation = (restaurantId, code) => {
-  if (!restaurantId || !code || typeof window === 'undefined') return false
-  const today = getTodayDateString()
-  try {
-    const raw = window.localStorage.getItem(getWaiterStorageKey(restaurantId, code))
-      || window.localStorage.getItem(`waiter_val_${restaurantId}_${String(code).trim().toLowerCase()}`)
-    if (!raw) return false
-    const parsed = JSON.parse(raw)
-    return parsed?.date === today && parsed?.valid === true
-  } catch {
-    return false
-  }
-}
-
-const saveCachedWaiterValidation = (restaurantId, code) => {
-  if (!restaurantId || !code || typeof window === 'undefined') return
-  const today = getTodayDateString()
-  try {
-    const key = getWaiterStorageKey(restaurantId, code)
-    window.localStorage.setItem(key, JSON.stringify({ date: today, valid: true }))
-  } catch (e) {
-    console.warn('Failed to save waiter validation in localStorage:', e)
-  }
-}
-
-const clearCachedWaiterValidation = (restaurantId, code) => {
-  if (typeof window === 'undefined') return
-  try {
-    if (restaurantId && code) {
-      window.localStorage.removeItem(getWaiterStorageKey(restaurantId, code))
-      window.localStorage.removeItem(`waiter_val_${restaurantId}_${String(code).trim().toLowerCase()}`)
-    }
-  } catch (e) {
-    console.warn('Failed to clear waiter validation cache:', e)
-  }
-}
-
 // ─── MenuViewer ───────────────────────────────────────────────────────────────
 function MenuViewer() {
   const { id, tableNo } = useParams()
@@ -3173,14 +3181,7 @@ function MenuViewer() {
   const waiterName = waiterParam ? decodeURIComponent(waiterParam).trim() : ''
 
   const initialCachedMenu = useMemo(() => getCachedMenuRecord(id), [id])
-  const initialIsVerifiedToday = useMemo(() => {
-    if (!waiterParam || !initialCachedMenu?.restaurantId) return false
-    return checkCachedWaiterValidation(initialCachedMenu.restaurantId, waiterName)
-  }, [waiterParam, initialCachedMenu?.restaurantId, waiterName])
-
-  const [isWaiterMode, setIsWaiterMode] = useState(() => Boolean(waiterParam && (!initialCachedMenu?.restaurantId || initialIsVerifiedToday)))
-  const [waiterAccessDenied, setWaiterAccessDenied] = useState(false)
-  const [isValidatingWaiter, setIsValidatingWaiter] = useState(false)
+  const [isWaiterMode, setIsWaiterMode] = useState(() => Boolean(waiterParam))
 
   const [selectedWaiterTable, setSelectedWaiterTable] = useState(null)
   const [menuData, setMenuData] = useState(() => initialCachedMenu)
@@ -3201,65 +3202,6 @@ function MenuViewer() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const [deviceId] = useState(() => getDeviceId())
   const [showCartDrawer, setShowCartDrawer] = useState(false)
-
-  // Verify waiter link against Firestore (loads menu from cache, only checks waiter code validation)
-  const verifyWaiter = useCallback(async (targetRestaurantId = menuData?.restaurantId) => {
-    if (!waiterParam || !waiterName || !id) return false
-    setIsValidatingWaiter(true)
-    try {
-      let rId = targetRestaurantId || menuData?.restaurantId
-      if (!rId) {
-        const menu = await getMenuRecord(id)
-        if (menu) {
-          setMenuData(menu)
-          rId = menu.restaurantId
-        }
-      }
-      if (!rId) return false
-
-      // Call Firestore to verify if the waiter code is still active
-      const isValid = await validateWaiterCode(rId, waiterName)
-      if (isValid) {
-        saveCachedWaiterValidation(rId, waiterName)
-        setIsWaiterMode(true)
-        setWaiterAccessDenied(false)
-        return true
-      } else {
-        clearCachedWaiterValidation(rId, waiterName)
-        setIsWaiterMode(false)
-        setWaiterAccessDenied(true)
-        alert("Access Denied: This waiter code is invalid or has been revoked by the manager.")
-        return false
-      }
-    } catch (err) {
-      console.error('Error verifying waiter code:', err)
-      return false
-    } finally {
-      setIsValidatingWaiter(false)
-    }
-  }, [waiterParam, waiterName, id, menuData?.restaurantId])
-
-  // Overnight Tab Protection: visibilitychange listener watches for wake up or tab switch past midnight
-  useEffect(() => {
-    if (!waiterParam || !waiterName || waiterAccessDenied) return
-
-    const handleVisibilityChange = async () => {
-      if (document.visibilityState === 'visible') {
-        const rId = menuData?.restaurantId
-        if (!rId) return
-        const isStillValidToday = checkCachedWaiterValidation(rId, waiterName)
-        if (!isStillValidToday) {
-          // Date has rolled over past midnight: trigger verification check
-          await verifyWaiter(rId)
-        }
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [waiterParam, waiterName, waiterAccessDenied, menuData?.restaurantId, verifyWaiter])
 
   // Resolve room or table location
   const activeLocation = useMemo(() => {
@@ -3395,9 +3337,6 @@ function MenuViewer() {
       if (freshData) {
         setMenuData(freshData)
       }
-      if (isWaiterMode && waiterName && freshData?.restaurantId) {
-        await verifyWaiter(freshData.restaurantId)
-      }
     } catch (err) {
       console.warn('Failed to refresh menu:', err)
     } finally {
@@ -3414,30 +3353,16 @@ function MenuViewer() {
 
       // Always load menu from cache first; only fetch from Firestore if cache is empty
       const cachedMenu = getCachedMenuRecord(id)
-      let currentMenu = cachedMenu
       if (cachedMenu) {
         setMenuData(cachedMenu)
       } else {
-        currentMenu = await getMenuRecord(id)
+        const currentMenu = await getMenuRecord(id)
         if (currentMenu) setMenuData(currentMenu)
       }
       setLoading(false)
-
-      if (waiterParam && waiterName) {
-        const restId = currentMenu?.restaurantId
-        const verifiedToday = restId ? checkCachedWaiterValidation(restId, waiterName) : false
-
-        if (verifiedToday) {
-          // Same day: already verified for today, 0 extra Firestore reads
-          setIsWaiterMode(true)
-        } else {
-          // New day or first load: verify waiter link with Firestore
-          await verifyWaiter(restId)
-        }
-      }
     }
     load()
-  }, [id, waiterParam, waiterName, verifyWaiter])
+  }, [id])
 
   useEffect(() => {
     if (!menuData?.restaurantId) return
@@ -3568,25 +3493,6 @@ function MenuViewer() {
 
   const placeOrder = async () => {
     if (!menuData?.restaurantId || (!allowOnlineOrders && !isWaiterMode)) return
-
-    if (isWaiterMode) {
-      // Order Placement Guard: confirm waiter authorization is valid for today before creating the Firestore order document
-      let isAuthorized = checkCachedWaiterValidation(menuData.restaurantId, waiterName)
-      if (!isAuthorized) {
-        const isStillValid = await validateWaiterCode(menuData.restaurantId, waiterName)
-        if (isStillValid) {
-          saveCachedWaiterValidation(menuData.restaurantId, waiterName)
-          isAuthorized = true
-        } else {
-          clearCachedWaiterValidation(menuData.restaurantId, waiterName)
-          setIsWaiterMode(false)
-          setWaiterAccessDenied(true)
-          setIsPlacingOrder(false)
-          alert("Access Denied: This waiter code is invalid or has been revoked by the manager.")
-          return
-        }
-      }
-    }
 
     if (!isWaiterMode && !customerName.trim()) {
       setOrderError('Please add your name before placing the order.')
@@ -3736,54 +3642,12 @@ function MenuViewer() {
     setIsCancelling(false)
   }
 
-  if (waiterAccessDenied) {
-    return (
-      <div className="min-h-screen bg-neutral-900 text-white flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-neutral-800/95 border border-red-900/40 rounded-3xl p-8 text-center shadow-2xl backdrop-blur-xl">
-          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl bg-red-500/10 border border-red-500/20 text-red-500 mb-6 shadow-inner">
-            <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-          </div>
-          <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest text-red-400 bg-red-950/60 rounded-full border border-red-800/50 mb-3">
-            Access Denied
-          </span>
-          <h2 className="text-2xl font-bold tracking-tight text-white mb-2">
-            Waiter Access Locked
-          </h2>
-          <p className="text-sm text-neutral-300 leading-relaxed mb-6">
-            This waiter code is invalid or has been revoked by the manager.
-          </p>
-          <div className="bg-neutral-900/90 rounded-2xl p-4 border border-neutral-800 text-left mb-6 space-y-2">
-            <div className="flex justify-between text-xs">
-              <span className="text-neutral-400">Attempted Code:</span>
-              <span className="font-mono font-semibold text-neutral-200">{waiterName || waiterParam}</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-neutral-400">Authorization Status:</span>
-              <span className="font-semibold text-red-400">Revoked / Expired</span>
-            </div>
-            <div className="flex justify-between text-xs">
-              <span className="text-neutral-400">Menu & Ordering:</span>
-              <span className="font-semibold text-neutral-400">Inaccessible</span>
-            </div>
-          </div>
-          <p className="text-xs text-neutral-500">
-            Please ask your manager to generate a new active waiter QR or link.
-          </p>
-        </div>
-      </div>
-    )
-  }
-
-  if (!menuData && (loading || isValidatingWaiter)) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-neutral-900 flex flex-col items-center justify-center p-6 text-white">
         <div className="flex flex-col items-center gap-4">
           <div className="h-10 w-10 animate-spin rounded-full border-4 border-green-500 border-t-transparent"></div>
-          <p className="text-sm font-medium text-neutral-300">
-            {waiterParam ? 'Verifying waiter access…' : 'Loading menu…'}
-          </p>
+          <p className="text-sm font-medium text-neutral-300">Loading menu…</p>
         </div>
       </div>
     )

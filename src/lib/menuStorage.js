@@ -303,22 +303,132 @@ export const getUserMenus = async (restaurantId, customDb = null) => {
   return menu ? [menu] : []
 }
 
-export const getUserProfile = async (uid, customDb = null) => {
+export const getUserProfile = async (uid, customDb = null, userEmail = null) => {
   const firestore = customDb || db
   if (!isFirebaseConfigured || !firestore || !uid) return null
+
+  const resolveRestId = (data) => {
+    if (!data) return null
+    return data.restaurantId || data.restaurant_id || (Array.isArray(data.restaurants) ? data.restaurants[0] : null) || null
+  }
+
+  // 1. Direct doc lookup by uid: users/{uid} with 10s timeout
   try {
     const docRef = doc(firestore, USERS_COLLECTION, uid)
     const snapPromise = getDoc(docRef)
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('getUserProfile timeout')), 4000)
+      setTimeout(() => reject(new Error('getUserProfile timeout')), 10000)
     )
     const snap = await Promise.race([snapPromise, timeoutPromise])
-    if (!snap.exists()) return null
-    return { uid: snap.id, ...snap.data() }
+    if (snap && snap.exists()) {
+      const data = snap.data()
+      const restId = resolveRestId(data)
+      if (restId) {
+        return { uid: snap.id, ...data, restaurantId: restId }
+      }
+    }
   } catch (err) {
-    console.warn('Could not fetch user profile:', err)
-    return null
+    console.warn('Could not fetch user profile by UID (attempt 1):', err)
   }
+
+  // 1b. Retry without timeout race in case cold connection took longer
+  try {
+    const docRef = doc(firestore, USERS_COLLECTION, uid)
+    const snap = await getDoc(docRef)
+    if (snap && snap.exists()) {
+      const data = snap.data()
+      const restId = resolveRestId(data)
+      if (restId) {
+        return { uid: snap.id, ...data, restaurantId: restId }
+      }
+    }
+  } catch (retryErr) {
+    console.warn('Could not fetch user profile by UID (retry):', retryErr)
+  }
+
+  // 2. Fallback: Search users collection by email
+  if (userEmail) {
+    try {
+      const qEmail = query(
+        collection(firestore, USERS_COLLECTION),
+        where('email', '==', userEmail.trim().toLowerCase()),
+        limit(1)
+      )
+      const snapEmail = await getDocs(qEmail)
+      if (!snapEmail.empty) {
+        const foundDoc = snapEmail.docs[0]
+        const data = foundDoc.data()
+        const restId = resolveRestId(data)
+        if (restId) {
+          // Heal the link so users/{uid} is directly saved for future logins
+          try {
+            await setDoc(doc(firestore, USERS_COLLECTION, uid), { ...data, restaurantId: restId }, { merge: true })
+          } catch {}
+          return { uid, ...data, restaurantId: restId }
+        }
+      }
+    } catch (emailErr) {
+      console.warn('Fallback search users by email failed:', emailErr)
+    }
+  }
+
+  // 3. Fallback: Search subscriptions collection where userId == uid
+  try {
+    const qSub = query(collection(firestore, 'subscriptions'), where('userId', '==', uid), limit(1))
+    const snapSub = await getDocs(qSub)
+    if (!snapSub.empty) {
+      const subDoc = snapSub.docs[0]
+      const subData = subDoc.data()
+      const restId = subData.restaurantId || subDoc.id
+      if (restId) {
+        const profileToSave = { restaurantId: restId, email: userEmail || '' }
+        try {
+          await setDoc(doc(firestore, USERS_COLLECTION, uid), profileToSave, { merge: true })
+        } catch {}
+        return { uid, ...profileToSave }
+      }
+    }
+  } catch (subErr) {
+    console.warn('Fallback search subscriptions by userId failed:', subErr)
+  }
+
+  // 4. Fallback: Search restaurants collection where userId == uid
+  try {
+    const qRest = query(collection(firestore, RESTAURANTS_COLLECTION), where('userId', '==', uid), limit(1))
+    const snapRest = await getDocs(qRest)
+    if (!snapRest.empty) {
+      const restDoc = snapRest.docs[0]
+      const restData = restDoc.data()
+      const profileToSave = { restaurantId: restDoc.id, restaurantName: restData.name || '', email: userEmail || '' }
+      try {
+        await setDoc(doc(firestore, USERS_COLLECTION, uid), profileToSave, { merge: true })
+      } catch {}
+      return { uid, ...profileToSave }
+    }
+  } catch (restErr) {
+    console.warn('Fallback search restaurants by userId failed:', restErr)
+  }
+
+  // 5. Fallback: Search connected_restaurants subcollection under users/{uid}
+  try {
+    const colRef = collection(firestore, USERS_COLLECTION, uid, 'connected_restaurants')
+    const snapConn = await getDocs(colRef)
+    if (!snapConn.empty) {
+      const connData = snapConn.docs[0].data()
+      const restId = connData.restaurantId || snapConn.docs[0].id
+      if (restId) {
+        const profileToSave = { restaurantId: restId, restaurantName: connData.name || '', email: userEmail || '' }
+        try {
+          await setDoc(doc(firestore, USERS_COLLECTION, uid), profileToSave, { merge: true })
+        } catch {}
+        return { uid, ...profileToSave }
+      }
+    }
+  } catch (connErr) {
+    console.warn('Fallback search connected_restaurants failed:', connErr)
+  }
+
+  return null
 }
 
 export const createRestaurantForUser = async (uid, profileData) => {
@@ -431,7 +541,7 @@ export const getRestaurantSettings = async (restaurantId, customDb = null) => {
     const docRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId)
     const snapPromise = getDoc(docRef)
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('getRestaurantSettings timeout')), 4000)
+      setTimeout(() => reject(new Error('getRestaurantSettings timeout')), 10000)
     )
     const snap = await Promise.race([snapPromise, timeoutPromise])
     if (snap.exists()) return { id: snap.id, ...snap.data() }
@@ -590,21 +700,6 @@ export const deleteWaiterCode = async (restaurantId, code, customDb = null) => {
   }
 }
 
-export const validateWaiterCode = async (restaurantId, code, customDb = null) => {
-  const firestore = customDb || db
-  if (!isFirebaseConfigured || !firestore || !restaurantId || !code) return false
-  try {
-    const docRef = doc(firestore, 'waiterCodes', restaurantId)
-    const snap = await getDoc(docRef)
-    if (!snap.exists()) return false
-    const data = snap.data() || {}
-    const searchCode = String(code).trim().toLowerCase()
-    return Object.keys(data).some((k) => k.trim().toLowerCase() === searchCode)
-  } catch (error) {
-    console.error("Error validating waiter code:", error)
-    return false
-  }
-}
 
 /**
  * Multi-Project Connected Restaurants (Saved to Project 1 Firestore under users/{uid}/connected_restaurants)
