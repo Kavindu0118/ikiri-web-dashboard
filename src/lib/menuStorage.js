@@ -227,8 +227,9 @@ export const getMenuRecord = async (menuId, forceFresh = false) => {
   return normalized
 }
 
-export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = null) => {
-  if (!isFirebaseConfigured || !db) {
+export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = null, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore) {
     return {
       remoteSaved: false,
       remoteId: null,
@@ -239,7 +240,7 @@ export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = nul
     return { remoteSaved: false, remoteId: null }
   }
 
-  const restaurantRef = doc(db, RESTAURANTS_COLLECTION, restaurantId)
+  const restaurantRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId)
   const restaurantSnap = await getDoc(restaurantRef)
   const existingRestaurantData = restaurantSnap.exists() ? restaurantSnap.data() : null
 
@@ -256,7 +257,7 @@ export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = nul
     updatedAt: serverTimestamp(),
   }, { merge: true })
 
-  const menuRef = doc(db, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC)
+  const menuRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC)
   await setDoc(menuRef, {
     title: menuPayload.menuTitle,
     menuTitle: menuPayload.menuTitle,
@@ -646,10 +647,11 @@ export const cancelRestaurantOrder = async (restaurantId, orderId) => {
   }
 }
 
-export const deleteMenuRecord = async (restaurantId) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return false
+export const deleteMenuRecord = async (restaurantId, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return false
   try {
-    const menuRef = doc(db, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC)
+    const menuRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC)
     await deleteDoc(menuRef)
     clearMenuCache(restaurantId)
     return true

@@ -2554,10 +2554,11 @@ function Editor() {
     let remoteSaved = false
     let remoteId = null
     try {
-      const result = await saveMenuRecord(payload, restaurantId)
+      const result = await saveMenuRecord(payload, restaurantId, null, activeDb)
       remoteSaved = result.remoteSaved
       remoteId = result.remoteId
-    } catch {
+    } catch (err) {
+      console.error('Error saving menu to Firestore:', err)
       remoteSaved = false
       remoteId = restaurantSettings?.slug || restaurantId
     }
@@ -2701,7 +2702,7 @@ function Editor() {
 
   const handleDeleteMenu = async (menu) => {
     setIsDeletingMenu(true)
-    await deleteMenuRecord(restaurantId)
+    await deleteMenuRecord(restaurantId, activeDb)
     setSavedMenus((prev) => prev.filter((m) => m.localId !== menu.localId))
     setDeleteConfirmId(null)
     setIsDeletingMenu(false)
