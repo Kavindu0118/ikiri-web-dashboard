@@ -13,7 +13,7 @@ import {
   updateDoc,
   deleteField,
 } from 'firebase/firestore'
-import { db, isFirebaseConfigured } from './firebase'
+import { db, isFirebaseConfigured, getSecondaryFirestore } from './firebase'
 
 const USERS_COLLECTION = 'users'
 const RESTAURANTS_COLLECTION = 'restaurants'
@@ -60,9 +60,10 @@ const normalizeMenuSections = (sections) => {
   }))
 }
 
-const normalizeMenu = ({ restaurantId, restaurantData, menuData }) => ({
+const normalizeMenu = ({ restaurantId, restaurantData, menuData, isSecondary = false }) => ({
   id: restaurantData.slug || restaurantId,
   restaurantId,
+  isSecondary: Boolean(isSecondary || restaurantData.isSecondary || menuData.isSecondary),
   slug: restaurantData.slug || restaurantId,
   restaurantName: restaurantData.name || menuData.restaurantName || 'Untitled Restaurant',
   templateId: menuData.templateId || 'minimal-cafe',
@@ -74,9 +75,11 @@ const normalizeMenu = ({ restaurantId, restaurantData, menuData }) => ({
   updatedAt: menuData.updatedAt || restaurantData.updatedAt || null,
 })
 
-const findRestaurantBySlug = async (slug) => {
+const findRestaurantBySlug = async (slug, customDb = null) => {
+  const firestore = customDb || db
+  if (!firestore) return null
   const restaurantQuery = query(
-    collection(db, RESTAURANTS_COLLECTION),
+    collection(firestore, RESTAURANTS_COLLECTION),
     where('slug', '==', slug),
     limit(1),
   )
@@ -180,7 +183,7 @@ export const clearMenuCache = (menuId) => {
   }
 }
 
-export const getMenuRecord = async (menuId, forceFresh = false) => {
+export const getMenuRecord = async (menuId, forceFresh = false, customDb = null) => {
   if (!menuId) return null
 
   // 1. Check browser localStorage cache
@@ -191,40 +194,84 @@ export const getMenuRecord = async (menuId, forceFresh = false) => {
     }
   }
 
-  if (!isFirebaseConfigured || !db) return null
+  if (!isFirebaseConfigured) return null
 
-  const byRestaurantIdRef = doc(db, RESTAURANTS_COLLECTION, menuId)
-  const byRestaurantIdSnap = await getDoc(byRestaurantIdRef)
+  const tryFetchFromDb = async (firestoreInstance, isSecondary = false) => {
+    if (!firestoreInstance) return null
+    try {
+      const byRestaurantIdRef = doc(firestoreInstance, RESTAURANTS_COLLECTION, menuId)
+      const byRestaurantIdSnap = await getDoc(byRestaurantIdRef)
 
-  let restaurantId = null
-  let restaurantData = null
+      let restaurantId = null
+      let restaurantData = null
 
-  if (byRestaurantIdSnap.exists()) {
-    restaurantId = byRestaurantIdSnap.id
-    restaurantData = byRestaurantIdSnap.data()
-  } else {
-    const restaurantBySlug = await findRestaurantBySlug(menuId)
-    if (!restaurantBySlug) {
+      if (byRestaurantIdSnap.exists()) {
+        restaurantId = byRestaurantIdSnap.id
+        restaurantData = byRestaurantIdSnap.data()
+      } else {
+        const restaurantBySlug = await findRestaurantBySlug(menuId, firestoreInstance)
+        if (!restaurantBySlug) {
+          return null
+        }
+        restaurantId = restaurantBySlug.id
+        restaurantData = restaurantBySlug.data()
+      }
+
+      const menuRef = doc(firestoreInstance, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC)
+      const menuSnap = await getDoc(menuRef)
+      if (!menuSnap.exists()) return null
+
+      return normalizeMenu({
+        restaurantId,
+        restaurantData,
+        menuData: menuSnap.data(),
+        isSecondary,
+      })
+    } catch (err) {
+      console.warn(`Error querying menu from ${isSecondary ? 'secondary' : 'primary'} DB:`, err)
       return null
     }
-    restaurantId = restaurantBySlug.id
-    restaurantData = restaurantBySlug.data()
   }
 
-  const menuRef = doc(db, RESTAURANTS_COLLECTION, restaurantId, MENU_SUBCOLLECTION, CURRENT_MENU_DOC)
-  const menuSnap = await getDoc(menuRef)
-  if (!menuSnap.exists()) return null
+  // If a specific customDb was provided, use it directly
+  if (customDb) {
+    const customResult = await tryFetchFromDb(customDb, false)
+    if (customResult) {
+      setCachedMenuRecord(menuId, customResult)
+      return customResult
+    }
+    return null
+  }
 
-  const normalized = normalizeMenu({
-    restaurantId,
-    restaurantData,
-    menuData: menuSnap.data(),
-  })
+  const isKaraDomain = typeof window !== 'undefined' && window.location.hostname.includes('kara')
+  const secondaryDb = getSecondaryFirestore()
 
-  // 2. Save fresh record to browser localStorage cache
-  setCachedMenuRecord(menuId, normalized)
+  // 1. If accessing via kara domain, check secondary Kara DB first
+  if (isKaraDomain && secondaryDb) {
+    const karaResult = await tryFetchFromDb(secondaryDb, true)
+    if (karaResult) {
+      setCachedMenuRecord(menuId, karaResult)
+      return karaResult
+    }
+  }
 
-  return normalized
+  // 2. Query primary Ikiri DB
+  const primaryResult = await tryFetchFromDb(db, false)
+  if (primaryResult) {
+    setCachedMenuRecord(menuId, primaryResult)
+    return primaryResult
+  }
+
+  // 3. Fallback: Query secondary Kara DB if not found in primary
+  if (!isKaraDomain && secondaryDb) {
+    const secondaryResult = await tryFetchFromDb(secondaryDb, true)
+    if (secondaryResult) {
+      setCachedMenuRecord(menuId, secondaryResult)
+      return secondaryResult
+    }
+  }
+
+  return null
 }
 
 export const saveMenuRecord = async (menuPayload, restaurantId, customSlug = null, customDb = null) => {
@@ -607,9 +654,10 @@ export const saveRestaurantSettings = async (restaurantId, settings, customDb = 
   }
 }
 
-export const createRestaurantOrder = async (restaurantId, orderPayload) => {
-  if (!isFirebaseConfigured || !db || !restaurantId) return null
-  const ordersRef = collection(db, RESTAURANTS_COLLECTION, restaurantId, ORDERS_SUBCOLLECTION)
+export const createRestaurantOrder = async (restaurantId, orderPayload, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId) return null
+  const ordersRef = collection(firestore, RESTAURANTS_COLLECTION, restaurantId, ORDERS_SUBCOLLECTION)
   const orderRef = doc(ordersRef)
 
   await setDoc(orderRef, {
@@ -623,9 +671,10 @@ export const createRestaurantOrder = async (restaurantId, orderPayload) => {
   return orderRef.id
 }
 
-export const subscribeToRestaurantOrder = (restaurantId, orderId, onChange) => {
-  if (!isFirebaseConfigured || !db || !restaurantId || !orderId) return () => {}
-  const orderRef = doc(db, RESTAURANTS_COLLECTION, restaurantId, ORDERS_SUBCOLLECTION, orderId)
+export const subscribeToRestaurantOrder = (restaurantId, orderId, onChange, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId || !orderId) return () => {}
+  const orderRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId, ORDERS_SUBCOLLECTION, orderId)
   return onSnapshot(orderRef, (snap) => {
     if (!snap.exists()) {
       onChange(null)
@@ -635,10 +684,11 @@ export const subscribeToRestaurantOrder = (restaurantId, orderId, onChange) => {
   })
 }
 
-export const cancelRestaurantOrder = async (restaurantId, orderId) => {
-  if (!isFirebaseConfigured || !db || !restaurantId || !orderId) return false
+export const cancelRestaurantOrder = async (restaurantId, orderId, customDb = null) => {
+  const firestore = customDb || db
+  if (!isFirebaseConfigured || !firestore || !restaurantId || !orderId) return false
   try {
-    const orderRef = doc(db, RESTAURANTS_COLLECTION, restaurantId, ORDERS_SUBCOLLECTION, orderId)
+    const orderRef = doc(firestore, RESTAURANTS_COLLECTION, restaurantId, ORDERS_SUBCOLLECTION, orderId)
     await deleteDoc(orderRef)
     return true
   } catch (error) {

@@ -6,6 +6,7 @@ import {
   persistentMultipleTabManager,
 } from 'firebase/firestore'
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth'
+import { getSecondaryProjectEnvConfig } from '../config/restaurants'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -61,12 +62,18 @@ export const logoutUser = async () => {
 const firestoreInstances = new Map()
 
 export const getFirestoreForRestaurant = (restaurant) => {
-  if (!restaurant) return db
-  if (restaurant.isDefault || !restaurant.firebaseConfig?.projectId || !restaurant.firebaseConfig?.apiKey) {
+  if (!restaurant || restaurant.isDefault) return db
+
+  const secondaryEnv = getSecondaryProjectEnvConfig()
+  const config = (restaurant.firebaseConfig?.projectId && restaurant.firebaseConfig?.apiKey)
+    ? restaurant.firebaseConfig
+    : (secondaryEnv.isConfigured ? secondaryEnv.firebaseConfig : null)
+
+  if (!config || !config.projectId || !config.apiKey) {
     return db
   }
 
-  const appName = `restaurant_app_${restaurant.id || restaurant.projectId}`
+  const appName = `restaurant_app_${restaurant.id || config.projectId}`
 
   if (firestoreInstances.has(appName)) {
     return firestoreInstances.get(appName)
@@ -74,7 +81,7 @@ export const getFirestoreForRestaurant = (restaurant) => {
 
   const apps = getApps()
   const existingApp = apps.find((a) => a.name === appName)
-  const secondaryApp = existingApp || initializeApp(restaurant.firebaseConfig, appName)
+  const secondaryApp = existingApp || initializeApp(config, appName)
 
   let secondaryDb = null
   if (typeof window !== 'undefined' && typeof window.indexedDB !== 'undefined') {
@@ -93,4 +100,10 @@ export const getFirestoreForRestaurant = (restaurant) => {
 
   firestoreInstances.set(appName, secondaryDb)
   return secondaryDb
+}
+
+export const getSecondaryFirestore = () => {
+  const secondaryEnv = getSecondaryProjectEnvConfig()
+  if (!secondaryEnv.isConfigured) return null
+  return getFirestoreForRestaurant({ id: 'secondary_kara', isDefault: false, firebaseConfig: secondaryEnv.firebaseConfig })
 }
