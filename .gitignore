@@ -7,17 +7,15 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Dependencies and build output
-node_modules/
-dist/
-dist-ssr/
+node_modules
+dist
+dist-ssr
 *.local
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea/
-.vs/
+.idea
 .DS_Store
 *.suo
 *.ntvs*
@@ -35,8 +33,3 @@ dist-ssr/
 firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*
-
-# Test folders
-test/
-tests/
-__tests__/
