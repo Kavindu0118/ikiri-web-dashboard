@@ -1697,13 +1697,16 @@ function Editor() {
     return () => { isActive = false }
   }, [user?.uid])
 
+  // Always default to 'main' restaurant on refresh/initial load
   const [selectedRestaurantId, setSelectedRestaurantId] = useState(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('selected_restaurant_id')
-      if (saved) return saved
+      try {
+        localStorage.removeItem('selected_restaurant_id')
+      } catch {}
     }
     return 'main'
   })
+
 
   const [mainRestaurantName, setMainRestaurantName] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -1782,9 +1785,6 @@ function Editor() {
     setRoomOrderingEnabled(false)
     setRooms([])
     setSelectedRestaurantId(newId)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('selected_restaurant_id', newId)
-    }
   }
 
   const handleSaveConnectedRestaurant = async (newBranch) => {

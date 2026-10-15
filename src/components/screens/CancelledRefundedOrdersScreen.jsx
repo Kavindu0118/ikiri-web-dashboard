@@ -782,15 +782,18 @@ export default function CancelledRefundedOrdersScreen({
           )}
         </div>
 
-        {/* Card 4: Open Tickets (Tap to view Tables Grid) */}
+        {/* Card 4: Occupied Tables / Open Tickets (Tap to view Tables Grid) */}
         <div
           onClick={() => setShowTablesModal(true)}
-          className="p-4 rounded-2xl bg-white border border-blue-100 shadow-2xs hover:shadow-md hover:border-blue-300 transition relative cursor-pointer group"
+          className={`p-4 rounded-2xl bg-white border shadow-2xs hover:shadow-md transition relative cursor-pointer group ${occupiedTableCount > 0
+              ? 'border-rose-200 bg-gradient-to-br from-white via-white to-rose-50/30 hover:border-rose-300'
+              : 'border-blue-100 hover:border-blue-300'
+            }`}
           title="Click to view Tables Grid"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-neutral-500 group-hover:text-blue-600 transition">
-              Open Tickets
+            <span className="text-xs font-bold uppercase tracking-wider text-neutral-600 group-hover:text-rose-600 transition flex items-center gap-1.5">
+              Occupied Tables
             </span>
             <button
               type="button"
@@ -800,26 +803,41 @@ export default function CancelledRefundedOrdersScreen({
               }}
               title="Click for info"
               className={`h-5 w-5 rounded-full flex items-center justify-center font-bold text-xs transition ${expandedInfoCard === 'open'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                  ? 'bg-rose-600 text-white'
+                  : 'bg-rose-50 text-rose-600 hover:bg-rose-100'
                 }`}
             >
               !
             </button>
           </div>
+
+          {/* Occupied Tables Hero Count */}
           <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
-            <span className="text-2xl font-extrabold text-blue-600">{stats.openCount}</span>
-            <span className="text-xs text-neutral-400 font-medium">active</span>
-            <span className="inline-flex items-center text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-md">
-              {stats.openItemsCount} {stats.openItemsCount === 1 ? 'item' : 'items'}
+            <span className="text-3xl font-black text-rose-600 tracking-tight">
+              {occupiedTableCount}
+            </span>
+            <span className="text-xs font-bold text-neutral-700">
+              {totalTables > 0 ? `/ ${totalTables} tables` : (occupiedTableCount === 1 ? 'table occupied' : 'tables occupied')}
             </span>
             {occupiedTableCount > 0 && (
-              <span className="ml-auto text-xs font-semibold text-red-600">
-                {occupiedTableCount} table{occupiedTableCount > 1 ? 's' : ''} occupied
+              <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-rose-700 bg-rose-100/80 border border-rose-200 px-2 py-0.5 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                Occupied
               </span>
             )}
           </div>
-          <div className="mt-2 flex items-center justify-between text-xs text-neutral-500 pt-2 border-t border-neutral-100">
+
+          {/* Open Tickets & Items breakdown */}
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center text-[11px] font-bold text-blue-700 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-md">
+              {stats.openCount} {stats.openCount === 1 ? 'Open Ticket' : 'Open Tickets'}
+            </span>
+            <span className="inline-flex items-center text-[11px] font-semibold text-neutral-600 bg-neutral-100 border border-neutral-200 px-2 py-0.5 rounded-md">
+              {stats.openItemsCount} {stats.openItemsCount === 1 ? 'item' : 'items'}
+            </span>
+          </div>
+
+          <div className="mt-2.5 flex items-center justify-between text-xs text-neutral-500 pt-2 border-t border-neutral-100">
             <span>Pending Total:</span>
             <span className="font-bold text-blue-800">
               {currencySymbol}{stats.openAmount.toFixed(2)}
@@ -830,9 +848,9 @@ export default function CancelledRefundedOrdersScreen({
           {expandedInfoCard === 'open' && (
             <div
               onClick={(e) => e.stopPropagation()}
-              className="mt-2 p-2.5 rounded-xl bg-blue-50/90 border border-blue-200 text-blue-900 text-[11px] leading-relaxed animate-fadeIn"
+              className="mt-2 p-2.5 rounded-xl bg-rose-50/90 border border-rose-200 text-rose-900 text-[11px] leading-relaxed animate-fadeIn"
             >
-              <strong>Open Tickets:</strong> Currently ongoing tickets synced from tables & rooms. Tap card to view live tables grid and see occupied tables.
+              <strong>Occupied Tables:</strong> Live table occupancy and pending orders synced from active tickets. Tap card to view live tables grid and see detailed table status.
             </div>
           )}
         </div>
