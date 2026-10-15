@@ -44,6 +44,7 @@ import {
   saveConnectedRestaurant,
   deleteConnectedRestaurant,
 } from './lib/menuStorage'
+import { subscribeToOpenTickets } from './lib/ordersStorage'
 
 import { uploadMenuItemImage, isSupabaseConfigured } from './lib/supabase'
 
@@ -3185,6 +3186,7 @@ function MenuViewer() {
   const [isWaiterMode, setIsWaiterMode] = useState(() => Boolean(waiterParam))
 
   const [selectedWaiterTable, setSelectedWaiterTable] = useState(null)
+  const [tableOccupancy, setTableOccupancy] = useState(null)
   const [menuData, setMenuData] = useState(() => initialCachedMenu)
   const [loading, setLoading] = useState(() => !initialCachedMenu)
   const [isRefreshingMenu, setIsRefreshingMenu] = useState(false)
@@ -3372,6 +3374,27 @@ function MenuViewer() {
     })
     return () => unsubscribe()
   }, [menuData])
+
+  useEffect(() => {
+    const restaurantId = menuData?.restaurantId
+    if (!restaurantId) return
+
+    const unsubscribe = subscribeToOpenTickets(
+      restaurantId,
+      (tickets) => {
+        const occupiedTableNumbers = new Set(
+          tickets
+            .map((ticket) => String(ticket.tableNumber ?? '').trim())
+            .filter(Boolean)
+        )
+        setTableOccupancy({ restaurantId, tableNumbers: occupiedTableNumbers })
+      },
+      (error) => {
+        console.error('Error listening for waiter table occupancy:', error)
+      }
+    )
+    return () => unsubscribe()
+  }, [menuData?.restaurantId])
 
   useEffect(() => {
     if (!orderStorageKey || !menuData?.restaurantId) return
@@ -3955,6 +3978,11 @@ function MenuViewer() {
                 {Array.from({ length: totalWaiterTables }, (_, idx) => {
                   const tNum = String(idx + 1)
                   const isSelected = selectedWaiterTable === tNum
+                  const isOccupied = Boolean(
+                    menuData?.restaurantId &&
+                    tableOccupancy?.restaurantId === menuData.restaurantId &&
+                    tableOccupancy?.tableNumbers.has(tNum)
+                  )
                   return (
                     <button
                       key={tNum}
@@ -3962,8 +3990,12 @@ function MenuViewer() {
                       onClick={() => setSelectedWaiterTable(tNum)}
                       className={`h-11 rounded-lg text-sm font-bold transition flex items-center justify-center border shadow-xs ${
                         isSelected
-                          ? 'bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-300 shadow-md scale-105'
-                          : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-400 hover:bg-neutral-100'
+                          ? isOccupied
+                            ? 'bg-red-600 text-white border-red-700 ring-2 ring-emerald-300 shadow-md scale-105'
+                            : 'bg-emerald-600 text-white border-emerald-600 ring-2 ring-emerald-300 shadow-md scale-105'
+                          : isOccupied
+                            ? 'bg-red-100 text-red-900 border-red-400 hover:border-red-500 hover:bg-red-200'
+                            : 'bg-white text-neutral-700 border-neutral-200 hover:border-neutral-400 hover:bg-neutral-100'
                       }`}
                     >
                       {tNum}
