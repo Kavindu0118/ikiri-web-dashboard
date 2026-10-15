@@ -72,6 +72,10 @@ export const STOCK_OUT_REASONS = [
  * Initializes and returns the Firestore instance for the backup database.
  */
 export const getBackupFirestore = (backupConfig) => {
+  if (!backupConfig) return null
+  if (typeof backupConfig === 'object' && (backupConfig.type === 'firestore' || backupConfig._databaseId || backupConfig.app)) {
+    return backupConfig
+  }
   if (!backupConfig?.apiKey || !backupConfig?.projectId || !backupConfig?.appId) {
     return null
   }
@@ -96,6 +100,9 @@ export const getBackupFirestore = (backupConfig) => {
  * Checks if backup database is properly configured
  */
 export const isBackupDbConfigured = (backupConfig) => {
+  if (backupConfig && (backupConfig.type === 'firestore' || backupConfig._databaseId || backupConfig.app)) {
+    return true
+  }
   return Boolean(backupConfig?.apiKey && backupConfig?.projectId && backupConfig?.appId)
 }
 

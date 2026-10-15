@@ -1,8 +1,8 @@
 import LoginModal from './LoginModal'
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react'
 import { Routes, Route, useParams, useSearchParams } from 'react-router-dom'
-import { auth, signInWithGoogle, logoutUser, getFirestoreForRestaurant } from './lib/firebase'
-import { getDefaultMainRestaurant, getStoredConnectedRestaurants, setStoredConnectedRestaurants, getRestaurantBaseUrl } from './config/restaurants'
+import { auth, db, signInWithGoogle, logoutUser, getFirestoreForRestaurant, getSecondaryFirestore } from './lib/firebase'
+import { getDefaultMainRestaurant, getStoredConnectedRestaurants, setStoredConnectedRestaurants, getRestaurantBaseUrl, getSecondaryProjectEnvConfig } from './config/restaurants'
 import { getCacheDbName } from './lib/ordersIdbCache'
 import ConnectRestaurantModal from './components/ConnectRestaurantModal'
 import RestaurantDropdown from './components/RestaurantDropdown'
@@ -1766,7 +1766,21 @@ function Editor() {
       'Main Restaurant'
 
     main.name = resolvedMainName
-    return [main, ...connectedBranches]
+
+    const secondaryEnv = getSecondaryProjectEnvConfig()
+    const enrichedBranches = connectedBranches.map((b) => {
+      const needsConfig = !b.firebaseConfig?.apiKey || !b.firebaseConfig?.projectId
+      if (needsConfig && secondaryEnv.isConfigured) {
+        return {
+          ...b,
+          projectId: b.projectId || secondaryEnv.projectId,
+          firebaseConfig: secondaryEnv.firebaseConfig,
+        }
+      }
+      return b
+    })
+
+    return [main, ...enrichedBranches]
   }, [connectedBranches, primaryProfile?.restaurantName, restaurantSettings?.name, selectedRestaurantId, mainRestaurantName])
 
   const selectedRestaurant = useMemo(() => {
@@ -1862,8 +1876,8 @@ function Editor() {
     if (selectedRestaurant?.isDefault) {
       return profile?.restaurantId || selectedRestaurant?.restaurantId || null
     }
-    return selectedRestaurant?.restaurantId || profile?.restaurantId || null
-  }, [selectedRestaurant, profile?.restaurantId])
+    return selectedRestaurant?.restaurantId || branchProfile?.restaurantId || null
+  }, [selectedRestaurant, profile?.restaurantId, branchProfile?.restaurantId])
 
   const activeCacheDbName = useMemo(() => {
     return getCacheDbName(selectedRestaurant?.projectId)
@@ -2994,6 +3008,7 @@ function Editor() {
               setActiveSection={setActiveSection}
               user={user}
               savedMenus={savedMenus}
+              activeDb={activeDb}
             />}
             {activeSection === 'my-menu' && <MyMenuScreen
               savedMenus={savedMenus}
@@ -3206,6 +3221,13 @@ function MenuViewer() {
   const [deviceId] = useState(() => getDeviceId())
   const [showCartDrawer, setShowCartDrawer] = useState(false)
 
+  const activeMenuDb = useMemo(() => {
+    if (menuData?.isSecondary) {
+      return getSecondaryFirestore() || db
+    }
+    return db
+  }, [menuData?.isSecondary])
+
   // Resolve room or table location
   const activeLocation = useMemo(() => {
     if (isWaiterMode && selectedWaiterTable) {
@@ -3371,9 +3393,9 @@ function MenuViewer() {
     if (!menuData?.restaurantId) return
     const unsubscribe = subscribeToRestaurantSettings(menuData.restaurantId, (settings) => {
       setRestaurantSettings(settings || { allowOnlineOrders: false })
-    })
+    }, activeMenuDb)
     return () => unsubscribe()
-  }, [menuData])
+  }, [menuData, activeMenuDb])
 
   useEffect(() => {
     const restaurantId = menuData?.restaurantId
@@ -3418,9 +3440,9 @@ function MenuViewer() {
       } else {
         setOrderData(order)
       }
-    })
+    }, activeMenuDb)
     return () => { unsubscribe() }
-  }, [menuData, activeOrderId, clearOrder])
+  }, [menuData, activeOrderId, clearOrder, activeMenuDb])
 
   // Save order to history if confirmed
   useEffect(() => {
@@ -3612,7 +3634,8 @@ function MenuViewer() {
     const orderId =
       await createRestaurantOrder(
         menuData.restaurantId,
-        orderPayload
+        orderPayload,
+        activeMenuDb
       )
 
 
@@ -3655,7 +3678,7 @@ function MenuViewer() {
   const handleCancelOrder = async () => {
     if (!menuData?.restaurantId || !activeOrderId) return
     setIsCancelling(true)
-    const success = await cancelRestaurantOrder(menuData.restaurantId, activeOrderId)
+    const success = await cancelRestaurantOrder(menuData.restaurantId, activeOrderId, activeMenuDb)
     if (success) {
       clearOrder()
       setShowCancelConfirm(false)

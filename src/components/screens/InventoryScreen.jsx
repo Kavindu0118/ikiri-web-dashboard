@@ -35,10 +35,12 @@ export default function InventoryScreen({
   setActiveSection,
   user,
   savedMenus = [],
+  activeDb = null,
 }) {
+  const effectiveBackup = activeDb || profile?.backupDatabase
   const isConfigured = useMemo(() => {
-    return isBackupDbConfigured(profile?.backupDatabase)
-  }, [profile?.backupDatabase])
+    return isBackupDbConfigured(effectiveBackup)
+  }, [effectiveBackup])
 
   const currencySymbol = restaurantSettings?.currency === 'LKR' ? 'Rs. ' : '$'
 
@@ -86,7 +88,7 @@ export default function InventoryScreen({
     setError(null)
 
     const unsubscribe = subscribeToBarInventoryItems(
-      profile.backupDatabase,
+      effectiveBackup,
       (fetchedItems) => {
         setItems(fetchedItems)
         setLoading(false)
@@ -104,12 +106,12 @@ export default function InventoryScreen({
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe()
     }
-  }, [isConfigured, profile?.backupDatabase])
+  }, [isConfigured, effectiveBackup])
 
   const refreshMovements = async () => {
     if (!isConfigured) return
     try {
-      const logs = await getInventoryMovements(profile.backupDatabase, 150)
+      const logs = await getInventoryMovements(effectiveBackup, 150)
       setMovements(logs)
     } catch (err) {
       console.error('Failed to load movements:', err)
@@ -296,7 +298,7 @@ export default function InventoryScreen({
         trackingEnabled: form.itemTracking.checked,
       }
 
-      await saveBarInventoryItem(profile.backupDatabase, itemData)
+      await saveBarInventoryItem(effectiveBackup, itemData)
       setIsItemModalOpen(false)
       setEditingItem(null)
       showSuccess(editingItem ? 'Bar product updated successfully!' : 'New bar product added to inventory!')
@@ -312,7 +314,7 @@ export default function InventoryScreen({
     if (!deleteConfirmItem) return
     setIsSubmitting(true)
     try {
-      await deleteBarInventoryItem(profile.backupDatabase, deleteConfirmItem.id)
+      await deleteBarInventoryItem(effectiveBackup, deleteConfirmItem.id)
       setDeleteConfirmItem(null)
       showSuccess('Item deleted from bar inventory.')
       refreshMovements()
@@ -335,7 +337,7 @@ export default function InventoryScreen({
       const invoiceNumber = form.stockInInvoice.value
       const notes = form.stockInNotes.value
 
-      await executeStockIn(profile.backupDatabase, {
+      await executeStockIn(effectiveBackup, {
         itemId: stockInTargetItem.id,
         item: stockInTargetItem,
         quantity: qty,
@@ -367,7 +369,7 @@ export default function InventoryScreen({
       const reason = form.stockOutReason.value
       const notes = form.stockOutNotes.value
 
-      await executeStockOut(profile.backupDatabase, {
+      await executeStockOut(effectiveBackup, {
         itemId: stockOutTargetItem.id,
         item: stockOutTargetItem,
         quantity: qty,
@@ -396,7 +398,7 @@ export default function InventoryScreen({
       const actualCount = Number(form.actualCount.value)
       const notes = form.adjustNotes.value
 
-      const res = await executeStockAdjustment(profile.backupDatabase, {
+      const res = await executeStockAdjustment(effectiveBackup, {
         itemId: adjustTargetItem.id,
         item: adjustTargetItem,
         actualCount,
