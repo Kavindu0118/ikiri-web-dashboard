@@ -3846,28 +3846,6 @@ export default function AnalyticsScreen({
         </div>
       </div>
 
-      {/* Audit Banner for Cancelled & Refunded Orders */}
-      {(stats.voidedOrders > 0 || stats.refundedOrders > 0) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-amber-50/90 border border-amber-200/90 rounded-2xl text-xs shadow-2xs">
-          <div className="flex items-center gap-2.5">
-            <span className="px-2 py-1 rounded-lg bg-amber-200/80 text-amber-900 font-bold text-[11px]">
-              Audit Notice
-            </span>
-            <span className="text-neutral-700">
-              There are{' '}
-              <strong className="text-red-600 font-bold">{stats.voidedOrders} voided orders</strong> ({currencySymbol}{stats.voidedAmount.toFixed(2)} zero revenue) and{' '}
-              <strong className="text-amber-800 font-bold">{stats.refundedOrders} refunded orders</strong> (-{currencySymbol}{stats.refundedAmount.toFixed(2)}) recorded in this range.
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setActiveSection && setActiveSection('cancelled-refunded')}
-            className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition shadow-2xs"
-          >
-            Review Cancelled & Refunded Orders →
-          </button>
-        </div>
-      )}
 
       {/* Revenue Bar Chart (Synced with top date range, Daily / Monthly toggle) */}
       <RevenueBarChart
