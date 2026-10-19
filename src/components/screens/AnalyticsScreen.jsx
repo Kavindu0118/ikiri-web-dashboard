@@ -2028,11 +2028,44 @@ export default function AnalyticsScreen({
     const items = Array.isArray(selectedOrder.items) ? selectedOrder.items : []
     const totalItemsCount = items.reduce((sum, i) => sum + (Number(i.qty || i.quantity) || 1), 0)
 
-    const subtotal = selectedOrder.subtotal != null
-      ? Number(selectedOrder.subtotal)
-      : items.reduce((sum, i) => sum + (Number(i.total || (Number(i.qty || i.quantity || 1) * Number(i.price || 0)))), 0)
+    // Calculate item-level discounts
+    const itemsDiscountTotal = items.reduce((sum, it) => {
+      const dAmt = Number(it.discountAmount || 0)
+      if (dAmt > 0) return sum + dAmt
+      const dVal = Number(it.discountValue || 0)
+      const dType = (it.discountType || '').toUpperCase()
+      const price = Number(it.price || it.unitPrice || 0)
+      const qty = Number(it.qty || it.quantity || 1)
+      if (dType === 'PERCENTAGE' && dVal > 0) {
+        return sum + Number(((price * qty * dVal) / 100).toFixed(2))
+      } else if (dVal > 0) {
+        return sum + dVal
+      }
+      return sum + Number(it.discount || 0)
+    }, 0)
 
-    const discount = Number(selectedOrder.discountAmount || selectedOrder.discount || 0)
+    // Order total discount: checks root fields and falls back to summed item discounts
+    const discount = Number(
+      selectedOrder.discountAmount ||
+      selectedOrder.discount ||
+      selectedOrder.totalDiscount ||
+      selectedOrder.totalDiscounts ||
+      itemsDiscountTotal ||
+      0
+    )
+
+    // Calculated gross subtotal of all items before discount
+    const calculatedGrossSubtotal = items.reduce(
+      (sum, i) => sum + ((Number(i.qty || i.quantity) || 1) * Number(i.price || i.unitPrice || 0)),
+      0
+    )
+
+    const subtotal = selectedOrder.subtotal != null && Number(selectedOrder.subtotal) > 0
+      ? (discount > 0 && Number(selectedOrder.subtotal) < calculatedGrossSubtotal
+          ? calculatedGrossSubtotal
+          : Number(selectedOrder.subtotal))
+      : (calculatedGrossSubtotal > 0 ? calculatedGrossSubtotal : items.reduce((sum, i) => sum + Number(i.total || 0), 0))
+
     const serviceFee = Number(selectedOrder.serviceFeeAmount || 0)
     const cardFee = Number(selectedOrder.cardFeeAmount || 0)
     const grandTotal = Number(selectedOrder.total || 0)
@@ -2211,9 +2244,12 @@ export default function AnalyticsScreen({
               </div>
 
               {discount > 0 && (
-                <div className="flex justify-between text-amber-700">
-                  <span>Discount</span>
-                  <span className="font-semibold">
+                <div className="flex justify-between items-center text-amber-800 bg-amber-50/90 px-2.5 py-1.5 rounded-xl border border-amber-200/80">
+                  <span className="flex items-center gap-1.5 font-semibold">
+                    <span className="text-xs">🏷️</span>
+                    <span>Total Discount {selectedOrder.discountName ? `(${selectedOrder.discountName})` : ''}</span>
+                  </span>
+                  <span className="font-bold text-amber-900">
                     -{currencySymbol}{discount.toFixed(2)}
                   </span>
                 </div>
@@ -2960,6 +2996,24 @@ export default function AnalyticsScreen({
                         const fees = Number(order.serviceFeeAmount || 0) + Number(order.cardFeeAmount || 0)
                         const cInfo = getOrderChannelInfo(order)
                         const locLabel = getOrderLocationLabel(order)
+                        const orderDiscount = Number(
+                          order.discountAmount ||
+                          order.discount ||
+                          order.totalDiscount ||
+                          order.totalDiscounts ||
+                          (Array.isArray(order.items)
+                            ? order.items.reduce((s, it) => {
+                                const dAmt = Number(it.discountAmount || 0)
+                                if (dAmt > 0) return s + dAmt
+                                const p = Number(it.price || it.unitPrice || 0)
+                                const q = Number(it.qty || it.quantity || 1)
+                                if ((it.discountType || '').toUpperCase() === 'PERCENTAGE' && Number(it.discountValue || 0) > 0) {
+                                  return s + Number(((p * q * Number(it.discountValue)) / 100).toFixed(2))
+                                }
+                                return s + Number(it.discount || 0)
+                              }, 0)
+                            : 0)
+                        )
 
                         return (
                           <tr
@@ -3018,8 +3072,15 @@ export default function AnalyticsScreen({
                             <td className="py-3 px-4 text-right text-neutral-500 whitespace-nowrap">
                               {currencySymbol}{fees.toFixed(2)}
                             </td>
-                            <td className="py-3 px-4 text-right font-extrabold text-neutral-900 whitespace-nowrap">
-                              {currencySymbol}{total.toFixed(2)}
+                            <td className="py-3 px-4 text-right whitespace-nowrap">
+                              <span className="font-extrabold text-neutral-900 block">
+                                {currencySymbol}{total.toFixed(2)}
+                              </span>
+                              {orderDiscount > 0 && (
+                                <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200 inline-block mt-0.5">
+                                  -disc {currencySymbol}{orderDiscount.toFixed(2)}
+                                </span>
+                              )}
                             </td>
                           </tr>
                         )
@@ -4226,6 +4287,24 @@ export default function AnalyticsScreen({
                       : 0
                     const cInfo = getOrderChannelInfo(order)
                     const locLabel = getOrderLocationLabel(order)
+                    const recentOrderDiscount = Number(
+                      order.discountAmount ||
+                      order.discount ||
+                      order.totalDiscount ||
+                      order.totalDiscounts ||
+                      (Array.isArray(order.items)
+                        ? order.items.reduce((s, it) => {
+                            const dAmt = Number(it.discountAmount || 0)
+                            if (dAmt > 0) return s + dAmt
+                            const p = Number(it.price || it.unitPrice || 0)
+                            const q = Number(it.qty || it.quantity || 1)
+                            if ((it.discountType || '').toUpperCase() === 'PERCENTAGE' && Number(it.discountValue || 0) > 0) {
+                              return s + Number(((p * q * Number(it.discountValue)) / 100).toFixed(2))
+                            }
+                            return s + Number(it.discount || 0)
+                          }, 0)
+                        : 0)
+                    )
 
                     return (
                       <tr
@@ -4267,9 +4346,15 @@ export default function AnalyticsScreen({
                           </span>
                         </td>
                         <td className="py-3 text-neutral-500">{itemsCount} items</td>
-                        <td className="py-3 text-right font-extrabold text-neutral-900">
-                          {currencySymbol}
-                          {Number(order.total || 0).toFixed(2)}
+                        <td className="py-3 text-right whitespace-nowrap">
+                          <span className="font-extrabold text-neutral-900 block">
+                            {currencySymbol}{Number(order.total || 0).toFixed(2)}
+                          </span>
+                          {recentOrderDiscount > 0 && (
+                            <span className="text-[9.5px] font-semibold text-amber-700 bg-amber-50 px-1 py-0.2 rounded border border-amber-200 inline-block">
+                              -disc {currencySymbol}{recentOrderDiscount.toFixed(2)}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     )
